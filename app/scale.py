@@ -8,7 +8,8 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from renpho import RenphoClient
+import renpho.client as _rc
+from renpho.client import RenphoAPIError, RenphoClient
 
 from . import db, vault
 
@@ -34,8 +35,49 @@ def _float(v):
 
 # ---------------- cloud ----------------
 
+# Renpho's server changed in late 2026: renpho-api 0.2.0 logins now fail with
+# code -114 ("Decryption failed"). Workaround from danvaneijck/renpho-api#12:
+# send appVersion/platform headers on every request (including login) and claim
+# app version 7.0.0 with a simplified bindingList. Drop this once upstream fixes it.
+_APP_VERSION = "7.0.0"
+_rc.APP_VERSION = _APP_VERSION  # used by RenphoClient._post for authed headers
+
+
+class _Client(RenphoClient):
+    def __init__(self, email: str, password: str):
+        super().__init__(email, password)
+        self._session.headers.update({"appVersion": _APP_VERSION, "platform": _rc.PLATFORM})
+
+    def login(self) -> dict:
+        payload = {
+            "questionnaire": {},
+            "login": {
+                "password": self.password,
+                "areaCode": "US",
+                "appRevision": _APP_VERSION,
+                "cellphoneType": "MCP-Server",
+                "systemType": "11",
+                "email": self.email,
+                "platform": _rc.PLATFORM,
+            },
+            "bindingList": {"deviceTypes": ["2"]},
+        }
+        result = self._post(_rc.ENDPOINTS["login"], _rc.encrypt_request(payload), auth=False)
+        code = result.get("code")
+        msg = result.get("msg") or result.get("message") or ""
+        if not (msg.lower() == "success" or code in _rc.SUCCESS_CODES):
+            if str(code) == "104":
+                msg = "wrong email or password"
+            raise RenphoAPIError("Login", code, msg)
+        info = _rc.decrypt_response(result["data"]).get("login", {})
+        self.token, self.user_id, self.user_info = info.get("token"), info.get("id"), info
+        if not self.token:
+            raise RenphoAPIError("Login", None, "no token in login response")
+        return info
+
+
 def link(profile_id: int, email: str, password: str) -> None:
-    client = RenphoClient(email, password)
+    client = _Client(email, password)
     client.login()  # raises RenphoAPIError on bad credentials
     with db.connect() as c:
         c.execute(
@@ -51,7 +93,7 @@ def sync(profile_id: int) -> dict:
     conn = db.row("SELECT * FROM connections WHERE profile_id=? AND provider='renpho'", (profile_id,))
     if not conn:
         raise LookupError("Renpho is not linked")
-    client = RenphoClient(conn["email"], vault.decrypt(conn["password_enc"]) or "")
+    client = _Client(conn["email"], vault.decrypt(conn["password_enc"]) or "")
     client.login()
     added = 0
     for m in client.get_all_measurements():
