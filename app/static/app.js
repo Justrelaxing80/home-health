@@ -11,6 +11,7 @@ const store = {
 const PROFILE_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
 const LB_PER_KG = 2.2046226218;
 const RANGES = [[30, "30 days"], [90, "90 days"], [365, "1 year"]];
+const PROV = { garmin: "Garmin", renpho: "Renpho", apple: "Apple Health" };
 
 const state = { profiles: [], charts: [], poll: null };
 
@@ -91,20 +92,26 @@ async function route() {
   }
   if (hash === "#/") return renderPicker();
   if ((m = hash.match(/^#\/p\/(\d+)\/settings$/))) return renderSettings(+m[1]);
+  if ((m = hash.match(/^#\/p\/(\d+)\/peptides$/))) return renderPeptides(+m[1]);
   if ((m = hash.match(/^#\/p\/(\d+)$/))) return renderDashboard(+m[1]);
   location.hash = "#/";
 }
 
-function setTopbar(profile, { onSettings = false } = {}) {
+const SECTIONS = [["health", "Health", ""], ["peptides", "Peptides", "/peptides"], ["settings", "Settings", "/settings"]];
+
+function navTabs(pid, section) {
+  return `<nav class="tabs" aria-label="Sections">${SECTIONS.map(([key, label, suffix]) =>
+    `<a href="#/p/${pid}${suffix}" ${key === section ? 'aria-current="page"' : ""}>${label}</a>`).join("")}</nav>`;
+}
+
+function setTopbar(profile, { section = "health" } = {}) {
   const el = $("#topbar-actions");
   if (!profile) { el.innerHTML = ""; return; }
+  const suffix = (SECTIONS.find((x) => x[0] === section) || SECTIONS[0])[2];
   const others = state.profiles.map((p) => `
-    <a href="#/p/${p.id}${onSettings ? "/settings" : ""}" class="${p.id === profile.id ? "current" : ""}">${avatar(p)} ${esc(p.name)}</a>`).join("");
+    <a href="#/p/${p.id}${suffix}" class="${p.id === profile.id ? "current" : ""}">${avatar(p)} ${esc(p.name)}</a>`).join("");
   el.innerHTML = `
-    ${onSettings
-      ? `<a class="btn" href="#/p/${profile.id}">Dashboard</a>`
-      : `<button class="btn" id="sync-btn" title="Pull new data from linked accounts">Sync now</button>
-         <a class="btn" href="#/p/${profile.id}/settings" title="Settings">Settings</a>`}
+    ${section === "health" ? `<button class="btn" id="sync-btn" title="Pull new data from linked accounts">Sync now</button>` : ""}
     <div class="switcher">
       <button aria-haspopup="true" aria-expanded="false" title="Switch profile">${avatar(profile)}<span class="name">${esc(profile.name)}</span> ▾</button>
       <div class="menu" role="menu">
@@ -124,7 +131,7 @@ function setTopbar(profile, { onSettings = false } = {}) {
 async function syncNow(pid, btn) {
   try {
     const r = await api(`/api/profiles/${pid}/sync`, { method: "POST" });
-    if (!r.queued.length) { toast("Nothing to sync — link Garmin or Renpho in Settings."); return; }
+    if (!r.queued.length) { toast("Nothing to pull — link Garmin or Renpho in Settings (Apple Health syncs from the phone)."); return; }
     toast(`Syncing ${r.queued.join(" + ")}…`);
     if (btn) { btn.disabled = true; btn.textContent = "Syncing…"; }
     pollUntilIdle(pid, () => route());
@@ -181,7 +188,7 @@ function renderPicker() {
       <div class="people">
         ${state.profiles.map((p) => `
           <a class="person" href="#/p/${p.id}">${avatar(p, "lg")}<span>${esc(p.name)}</span>
-            <small>${p.connections.length ? esc(p.connections.map((c) => c[0].toUpperCase() + c.slice(1)).join(" · ")) : "No accounts linked"}</small></a>`).join("")}
+            <small>${p.connections.length ? esc(p.connections.map((c) => PROV[c] || c).join(" · ")) : "No accounts linked"}</small></a>`).join("")}
         <button class="person" id="add-person"><span class="avatar lg add">＋</span><span>Add profile</span><small>&nbsp;</small></button>
       </div>
       ${state.profiles.some((p) => p.name === "Demo") ? "" : `<button class="btn" id="demo-btn">Add a demo profile with sample data</button>`}
@@ -331,11 +338,17 @@ async function renderDashboard(pid) {
   if (bb) tiles.push({ label: "Body Battery", value: bb.body_battery_high, unit: "", meta: `Low ${bb.body_battery_low ?? "–"} · ${dayLabel(bb.date)}` });
   const stress = lastWith(d.daily, "avg_stress");
   if (stress) tiles.push({ label: "Stress", value: stress.avg_stress, unit: "avg", meta: dayLabel(stress.date) });
+  const pep = d.peptides;
+  if (pep) tiles.push({ label: "Peptides today", href: `#/p/${pid}/peptides`,
+    value: pep.scheduled ? `${pep.taken}/${pep.scheduled}` : "–", unit: pep.scheduled ? "taken" : "",
+    meta: pep.overdue ? `${pep.overdue} overdue` : pep.next ? `Next: ${pep.next.name} ${whenLabel(pep.next.scheduled_for)}` : "Nothing scheduled",
+    warn: pep.overdue > 0 });
 
   // ---- view ----
   $("#view").innerHTML = `
-    ${!conns.length ? `<div class="banner"><span>No accounts linked yet. Connect Garmin and/or Renpho to start filling this dashboard.</span><a class="btn primary" href="#/p/${pid}/settings">Connect accounts</a></div>` : ""}
-    ${problems.map((c) => `<div class="banner ${c.status === "needs_relink" ? "warn" : "bad"}"><span><b>${c.provider === "garmin" ? "Garmin" : "Renpho"}:</b> ${esc(c.last_error || "Sync problem")}</span><a class="btn small" href="#/p/${pid}/settings">Fix in Settings</a></div>`).join("")}
+    ${navTabs(pid, "health")}
+    ${!conns.length ? `<div class="banner"><span>No accounts linked yet. Connect Garmin, Renpho, or Apple Health to start filling this dashboard.</span><a class="btn primary" href="#/p/${pid}/settings">Connect accounts</a></div>` : ""}
+    ${problems.map((c) => `<div class="banner ${c.status === "needs_relink" ? "warn" : "bad"}"><span><b>${PROV[c.provider] || esc(c.provider)}:</b> ${esc(c.last_error || "Sync problem")}</span><a class="btn small" href="#/p/${pid}/settings">Fix in Settings</a></div>`).join("")}
     <div class="dash-head">
       <div><h1>${esc(p.name)}</h1><p class="sub" style="margin:0">${conns.length ? `Last synced ${ago(lastSync)}` : "Not connected"}</p></div>
       <div class="seg" role="group" aria-label="Date range">
@@ -343,17 +356,17 @@ async function renderDashboard(pid) {
       </div>
     </div>
     ${tiles.length ? `<div class="tiles">${tiles.map((x) => `
-      <div class="tile"><div class="label">${esc(x.label)}</div>
+      <${x.href ? `a href="${x.href}"` : "div"} class="tile${x.href ? " link" : ""}${x.warn ? " warn" : ""}"><div class="label">${esc(x.label)}</div>
         <div class="value">${esc(x.value)}${x.unit ? `<small>${esc(x.unit)}</small>` : ""}</div>
         ${x.bar != null ? `<div class="bar" title="${nf0.format(x.bar)}% of ${nf0.format(p.step_goal)} goal"><span style="width:${x.bar}%"></span></div>` : ""}
-        <div class="meta">${esc(x.meta || "")}</div></div>`).join("")}</div>` : ""}
+        <div class="meta">${esc(x.meta || "")}</div></${x.href ? "a" : "div"}>`).join("")}</div>` : ""}
     <div class="charts" id="charts"></div>
     <section class="card activities" id="activities"></section>`;
 
   document.querySelectorAll(".seg button").forEach((b) => b.onclick = () => { store.set("range", b.dataset.days); route(); });
 
   if (!hasData) {
-    $("#charts").innerHTML = emptyCard("No data yet", conns.length ? "Linked accounts are syncing — this can take a minute for the first run." : "Link an account in Settings, or import a Renpho CSV.");
+    $("#charts").innerHTML = emptyCard("No data yet", conns.length ? "Linked accounts are syncing — this can take a minute for the first run." : "Link an account in Settings, or import a Renpho CSV or Apple Health export.");
     $("#activities").remove();
     if (conns.some((c) => c.status === "syncing")) pollUntilIdle(pid, () => route());
     return;
@@ -375,7 +388,7 @@ async function renderDashboard(pid) {
   // Body fat
   const fPts = d.body.filter((b) => b.body_fat != null).map((b) => ({ x: b.measured_at, y: b.body_fat }));
   if (fPts.length) specs.push({
-    id: "fat", title: "Body fat (%)", subtitle: "From your Renpho scale",
+    id: "fat", title: "Body fat (%)", subtitle: "From your smart scale",
     table: { cols: ["Date", "Body fat (%)"], rows: fPts.map((q) => [longDate(q.x), nf1.format(q.y)]) },
     build: () => ({ type: "line", data: { datasets: [lineDataset(t, "Body fat", t.s[0], fPts)] },
       options: baseOptions(t, { linearX: true, points: fPts, yFmt: (v) => nf0.format(v) + "%", tipFmt: (v) => nf1.format(v) + "%", titleFmt: (it) => longDate(it[0].parsed.x) }) }),
@@ -421,7 +434,7 @@ async function renderDashboard(pid) {
   // HRV
   const hPts = d.daily.filter((r) => r.hrv_avg != null).map((r) => ({ x: dayTs(r.date), y: r.hrv_avg }));
   if (hPts.length) specs.push({
-    id: "hrv", title: "Overnight HRV (ms)", subtitle: "Nightly average",
+    id: "hrv", title: "HRV (ms)", subtitle: "Garmin: overnight average · Apple: daily SDNN average",
     table: { cols: ["Date", "HRV (ms)"], rows: hPts.map((q) => [longDate(q.x), q.y]) },
     build: () => ({ type: "line", data: { datasets: [lineDataset(t, "HRV", t.s[0], hPts)] },
       options: baseOptions(t, { linearX: true, points: hPts, tipFmt: (v) => `${v} ms`, titleFmt: (it) => longDate(it[0].parsed.x) }) }),
@@ -462,6 +475,12 @@ function dayLabel(iso) {
   const diff = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 86400000);
   return diff === 0 ? "Today" : diff === 1 ? "Yesterday" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+function whenLabel(stamp) {
+  const d = new Date(stamp);
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const day = dayLabel(stamp.slice(0, 10));
+  return day === "Today" ? time : `${day} ${time}`;
+}
 const prettyType = (t) => (t || "Activity").replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 
 // ---------------- settings ----------------
@@ -472,7 +491,7 @@ async function renderSettings(pid) {
   if (!p) { location.hash = "#/"; return; }
   const conns = await api(`/api/profiles/${pid}/connections`);
   const conn = (prov) => conns.find((c) => c.provider === prov);
-  setTopbar(p, { onSettings: true });
+  setTopbar(p, { section: "settings" });
 
   const providerCard = (prov, title, blurb, extra = "") => {
     const c = conn(prov);
@@ -503,8 +522,9 @@ async function renderSettings(pid) {
   };
 
   $("#view").innerHTML = `
+    ${navTabs(pid, "settings")}
     <h1>${esc(p.name)} · Settings</h1>
-    <p class="sub">Link this person's accounts. Each profile uses its own Garmin and Renpho logins.</p>
+    <p class="sub">Link this person's accounts. Each profile uses its own Garmin, Renpho, and Apple Health.</p>
     <div class="settings">
       <section class="card">
         <h2 style="margin-bottom:12px">Profile</h2>
@@ -526,6 +546,7 @@ async function renderSettings(pid) {
         <p class="note">In the Renpho app: <i>Me → Data export</i> (or <i>Settings → Export data</i>), then upload the file here. Re-importing the same file is safe.</p>
         <div class="row"><input type="file" id="csv-file" accept=".csv,text/csv"><button class="btn small" id="csv-btn">Import</button></div>
         <p id="csv-msg" hidden></p>`)}
+      ${appleCard(conn("apple"))}
     </div>`;
 
   renderSwatches($("#ep-colors"), p.color);
@@ -555,11 +576,11 @@ async function renderSettings(pid) {
         const m = $(`.mfa-form[data-prov="${prov}"]`); m.hidden = false; m.code.focus();
         return;
       }
-      toast(`${prov === "garmin" ? "Garmin" : "Renpho"} linked — first sync started`);
+      toast(`${PROV[prov]} linked — first sync started`);
       route();
     } catch (x) {
       err.textContent = x.message; err.hidden = false;
-    } finally { btn.disabled = false; btn.textContent = `Link ${prov === "garmin" ? "Garmin" : "Renpho"}`; }
+    } finally { btn.disabled = false; btn.textContent = `Link ${PROV[prov]}`; }
   });
   document.querySelectorAll(".mfa-form").forEach((f) => f.onsubmit = async (e) => {
     e.preventDefault();
@@ -595,6 +616,76 @@ async function renderSettings(pid) {
       msg.textContent = `Imported ${r.imported} readings${r.skipped ? ` (${r.skipped} rows skipped)` : ""}. Columns found: ${r.columns.join(", ")}.`;
     } catch (x) { msg.className = "err"; msg.textContent = x.message; }
   };
+  wireAppleCard(pid, conn("apple"));
 }
 
-route();
+// ---------------- Apple Health (settings card) ----------------
+function appleCard(c) {
+  return `<section class="card" id="card-apple">
+    <div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Apple Health</h2>
+      ${c ? `<span class="status ${c.status}">${c.status === "syncing" ? "Importing…" : STATUS_TEXT[c.status] || esc(c.status)}</span>` : `<span class="status">Not linked</span>`}</div>
+    <p class="note">Steps, sleep stages, resting heart rate, HRV, active energy, exercise minutes, weight and workouts from the iPhone Health app. Apple has no web login, so data is sent <i>from</i> the iPhone, either automatically or as an export file.</p>
+    ${c ? `<p class="note">Last received: ${ago(c.last_sync)}</p>${c.last_error ? `<p class="err">${esc(c.last_error)}</p>` : ""}` : ""}
+    <h2 style="font-size:15px;margin:14px 0 4px">Automatic sync (Health Auto Export)</h2>
+    <div id="apple-auto">${c ? `<p class="note">Loading…</p>` : `
+      <p class="note">Creates a private URL that the iPhone app <b>Health Auto Export</b> sends data to.</p>
+      <button class="btn small primary" id="apple-enable">Create sync URL</button>`}</div>
+    <hr style="border:0;border-top:1px solid var(--border);margin:16px 0">
+    <h2 style="font-size:15px;margin-bottom:4px">Import a Health export</h2>
+    <p class="note">On the iPhone: <i>Health → profile picture → Export All Health Data</i>, save <b>export.zip</b>, then upload it here. Large exports take a few minutes to process. Re-importing is safe.</p>
+    <div class="row"><input type="file" id="apple-file" accept=".zip,.xml,application/zip,text/xml"><button class="btn small" id="apple-upload">Import</button></div>
+    <p id="apple-msg" hidden></p>
+    ${c ? `<div class="row" style="margin-top:14px"><button class="btn small danger" id="apple-unlink">Unlink Apple Health</button></div>` : ""}
+  </section>`;
+}
+
+async function wireAppleCard(pid, c) {
+  const auto = $("#apple-auto");
+  const showUrl = (token) => {
+    const url = `${location.origin}/api/ingest/apple/${token}`;
+    auto.innerHTML = `
+      <div class="field"><label for="apple-url">Sync URL (keep private)</label>
+        <div class="row" style="flex-wrap:nowrap"><input id="apple-url" readonly value="${esc(url)}"><button class="btn small" id="apple-copy">Copy</button></div></div>
+      <ol class="note steps">
+        <li>Install <b>Health Auto Export</b> on the iPhone (the REST API automation needs its premium tier).</li>
+        <li><i>Automations → New → REST API</i>. Paste the URL above.</li>
+        <li>Format <b>JSON</b>, Aggregate <b>Days</b>, date range <b>Last 7 Days</b>. Include workouts.</li>
+        <li>Metrics: Step Count, Resting Heart Rate, Heart Rate Variability, Sleep Analysis, Active Energy, Basal Energy Burned, Apple Exercise Time, Flights Climbed, Weight &amp; Body Mass, Body Fat Percentage.</li>
+        <li>The phone must be able to reach this server: on home Wi-Fi, or remotely through a VPN such as Tailscale.</li>
+      </ol>
+      <button class="btn small" id="apple-rotate">Make a new URL</button>`;
+    $("#apple-copy").onclick = async () => {
+      try { await navigator.clipboard.writeText(url); toast("Copied"); }
+      catch { $("#apple-url").select(); toast("Press Ctrl/⌘+C to copy"); }
+    };
+    $("#apple-rotate").onclick = async () => {
+      if (!confirm("Make a new URL? The old one stops working, so update it in Health Auto Export.")) return;
+      showUrl((await api(`/api/profiles/${pid}/apple/enable`, { method: "POST" })).token);
+    };
+  };
+  if (c) {
+    const r = await api(`/api/profiles/${pid}/apple`);
+    if (r.token) showUrl(r.token);
+  } else {
+    $("#apple-enable").onclick = async () => showUrl((await api(`/api/profiles/${pid}/apple/enable`, { method: "POST" })).token);
+  }
+  const unlink = $("#apple-unlink");
+  if (unlink) unlink.onclick = async () => {
+    if (!confirm("Unlink Apple Health? The sync URL stops working; data already imported stays.")) return;
+    await api(`/api/profiles/${pid}/apple`, { method: "DELETE" }); route();
+  };
+  $("#apple-upload").onclick = async () => {
+    const file = $("#apple-file").files[0], msg = $("#apple-msg");
+    if (!file) { toast("Choose export.zip first"); return; }
+    const fd = new FormData(); fd.append("file", file);
+    msg.hidden = false; msg.className = "note";
+    msg.textContent = `Uploading ${(file.size / 1048576).toFixed(0)} MB…`;
+    try {
+      await api(`/api/profiles/${pid}/import/apple-export`, { method: "POST", body: fd });
+      msg.textContent = "Uploaded. Processing in the background, which can take a few minutes for big exports.";
+      pollUntilIdle(pid, () => route());
+    } catch (x) { msg.className = "err"; msg.textContent = x.message; }
+  };
+}
+
+document.addEventListener("DOMContentLoaded", route);

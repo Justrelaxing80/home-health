@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from . import db, garmin, scale
+from . import db, garmin, peptides, scale
 
 log = logging.getLogger("home-health.sync")
 
@@ -54,6 +54,8 @@ def start(profile_id: int, provider: str | None = None) -> list[str]:
     queued = []
     for c in conns:
         p = c["provider"]
+        if p not in PROVIDERS:  # e.g. Apple Health is pushed from the phone, not pulled
+            continue
         if provider and p != provider:
             continue
         with _lock:
@@ -72,16 +74,24 @@ def sync_all() -> None:
 
 def start_scheduler() -> None:
     global _scheduler
-    if _scheduler or SYNC_INTERVAL_MIN <= 0:
+    if _scheduler:
         return
     _scheduler = BackgroundScheduler(daemon=True)
-    _scheduler.add_job(sync_all, "interval", minutes=SYNC_INTERVAL_MIN, id="sync_all",
+    if SYNC_INTERVAL_MIN > 0:
+        _scheduler.add_job(sync_all, "interval", minutes=SYNC_INTERVAL_MIN, id="sync_all",
+                           max_instances=1, coalesce=True)
+    _scheduler.add_job(peptides.check_reminders, "cron", second=5, id="reminders",
                        max_instances=1, coalesce=True)
     _scheduler.start()
     # Recover rows left as "syncing" by a crash/restart.
-    db.execute("UPDATE connections SET status='linked' WHERE status='syncing'")
+    db.execute("UPDATE connections SET status='linked' WHERE status='syncing'")  # incl. interrupted Apple imports
 
 
 def stop_scheduler() -> None:
     if _scheduler:
         _scheduler.shutdown(wait=False)
+
+
+def submit(fn) -> None:
+    """Run a one-off background job (e.g. an Apple Health export import)."""
+    _pool.submit(fn)

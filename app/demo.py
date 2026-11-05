@@ -58,4 +58,39 @@ def create_demo_profile(name: str = "Demo") -> int:
                 "distance_m": dist * rnd.uniform(0.8, 1.3) if dist else None,
                 "calories": rnd.randint(200, 750), "avg_hr": rnd.randint(105, 158),
             })
+    _demo_peptides(pid, rnd)
     return pid
+
+
+def _demo_peptides(pid: int, rnd: random.Random) -> None:
+    """Two sample protocols with three weeks of history (sample data, not advice)."""
+    from . import peptides  # local import: avoids a cycle at module load
+
+    today = peptides.now_local().date()
+    start = today - timedelta(days=21)
+    a = db.execute(
+        "INSERT INTO peptides (profile_id, name, color, vial_mg, water_ml, reconstituted_on, dose_mcg, "
+        "dose_unit, route, freq, times, start_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (pid, "Sample A", "#2a78d6", 5, 2, (today - timedelta(days=9)).isoformat(), 250, "mcg",
+         "SubQ", "daily", "08:00,20:00", start.isoformat()))
+    b = db.execute(
+        "INSERT INTO peptides (profile_id, name, color, vial_mg, water_ml, reconstituted_on, dose_mcg, "
+        "dose_unit, route, freq, weekdays, times, start_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (pid, "Sample B", "#eb6834", 10, 3, (today - timedelta(days=20)).isoformat(), 2000, "mg",
+         "SubQ", "weekdays", "0,3", "07:30", start.isoformat()))
+    peps = db.rows("SELECT * FROM peptides WHERE id IN (?,?)", (a, b))
+    now = peptides.now_local().strftime("%Y-%m-%dT%H:%M")
+    for i in range(21, -1, -1):
+        d = today - timedelta(days=i)
+        for o in peptides.occurrences(peps, d):
+            if o["scheduled_for"] > now:
+                continue
+            p = next(x for x in peps if x["id"] == o["peptide_id"])
+            skipped = rnd.random() < 0.08
+            db.execute(
+                "INSERT INTO peptide_logs (profile_id, peptide_id, peptide_name, status, taken_at, "
+                "scheduled_for, dose_mcg, units, site) VALUES (?,?,?,?,?,?,?,?,?)",
+                (pid, p["id"], p["name"], "skipped" if skipped else "taken", o["scheduled_for"],
+                 o["scheduled_for"], None if skipped else p["dose_mcg"],
+                 None if skipped else peptides.units_for(p, p["dose_mcg"]),
+                 None if skipped else peptides.SITES[rnd.randrange(len(peptides.SITES))]))

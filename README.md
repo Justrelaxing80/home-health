@@ -1,13 +1,21 @@
 # Home Health
 
 A household health dashboard for ZimaOS. Each family member gets a profile and
-links their own **Garmin Connect** and **Renpho** accounts; the app syncs every
-hour and charts it all on one page. Switch people from the profile menu in the
-top-right corner.
+links their own **Garmin Connect**, **Renpho**, and **Apple Health** data; the
+app charts it all on one page. Switch people from the profile menu in the
+top-right corner. Each profile also has a **Peptides** tab for tracking doses.
 
-**Shows:** weight, body fat, visceral fat (Renpho) · steps vs. goal, sleep and
-sleep stages, sleep score, resting HR, overnight HRV, Body Battery, stress,
-recent activities (Garmin).
+**Shows:** weight, body fat, visceral fat (Renpho/Apple) · steps vs. goal, sleep and
+sleep stages, sleep score, resting HR, HRV, Body Battery, stress,
+recent activities (Garmin/Apple). When Garmin and Apple both report a day, Garmin's
+numbers are used and Apple fills the gaps.
+
+**Peptides tab:** today's dose checklist (log / skip / undo), compounds with
+dosing schedules (daily, specific weekdays, every N days, as needed; several
+times a day), vial tracking (reconstitution, mcg/mL, units to draw on a U-100
+syringe, amount left, discard date), dose log, 30-day adherence, injection-site
+rotation, a reconstitution calculator, and push reminders through
+[ntfy](https://ntfy.sh). For personal tracking only, not medical advice.
 
 ## Install on ZimaOS
 
@@ -41,6 +49,15 @@ of `9085:8080`.
      two-step verification, Garmin sends a code and the page asks for it.
    - **Renpho**: enter their Renpho app email/password. Or skip the cloud link and
      use **Import Renpho CSV** with a file exported from the Renpho app.
+   - **Apple Health**: Apple has no web login; data has to come from the iPhone.
+     Either click **Create sync URL** and paste it into the iOS app
+     *Health Auto Export* (REST API automation, JSON, aggregated by day), or upload
+     the `export.zip` from *Health → profile → Export All Health Data*. The phone
+     must be able to reach the server (home Wi-Fi, or a VPN like Tailscale).
+3. **Peptides → Reminders**: install the ntfy app on the phone, subscribe to the
+   topic shown, and turn reminders on. A notification is sent when each
+   scheduled dose comes due. Pick a hard-to-guess topic, because anyone who knows
+   a topic on the public ntfy.sh server can read it (or tick *Hide peptide names*).
 
 ## Things to know
 
@@ -66,6 +83,7 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # Window
 DATA_DIR=./data .venv/Scripts/python -m uvicorn app.main:app --port 9085 --reload
 ```
 
-Layout: `app/main.py` (API), `garmin.py` / `scale.py` (integrations),
+Layout: `app/main.py` (API), `garmin.py` / `scale.py` / `apple.py` (integrations),
+`peptides.py` (schedules, vial math, ntfy reminders),
 `sync.py` (scheduler), `db.py` (SQLite), `static/` (dashboard, no build step;
 Chart.js 4.4.1 is vendored in `static/vendor`).

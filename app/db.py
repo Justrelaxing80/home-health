@@ -87,6 +87,85 @@ CREATE TABLE IF NOT EXISTS activities (
     avg_hr       REAL,
     PRIMARY KEY (profile_id, activity_id)
 );
+
+-- Apple Health daily values. Kept apart from Garmin's `daily` so the two never
+-- overwrite each other; the dashboard prefers Garmin and fills gaps from Apple.
+CREATE TABLE IF NOT EXISTS apple_daily (
+    profile_id        INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    date              TEXT NOT NULL,
+    steps             INTEGER,
+    resting_hr        INTEGER,
+    avg_stress        INTEGER,
+    body_battery_high INTEGER,
+    body_battery_low  INTEGER,
+    active_kcal       INTEGER,
+    total_kcal        INTEGER,
+    intensity_min     INTEGER,
+    floors            REAL,
+    sleep_s           INTEGER,
+    deep_s            INTEGER,
+    light_s           INTEGER,
+    rem_s             INTEGER,
+    awake_s           INTEGER,
+    sleep_score       INTEGER,
+    hrv_avg           INTEGER,
+    PRIMARY KEY (profile_id, date)
+);
+
+-- Peptides: one row = a compound + its current vial + its dosing protocol.
+-- All peptide times are local wall-clock strings (YYYY-MM-DD / YYYY-MM-DDTHH:MM).
+CREATE TABLE IF NOT EXISTS peptides (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id       INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    color            TEXT NOT NULL DEFAULT '#2a78d6',
+    vial_mg          REAL,
+    water_ml         REAL,
+    reconstituted_on TEXT,
+    expiry_days      INTEGER NOT NULL DEFAULT 28,
+    dose_mcg         REAL NOT NULL,
+    dose_unit        TEXT NOT NULL DEFAULT 'mcg',     -- mcg | mg (display only)
+    route            TEXT NOT NULL DEFAULT 'SubQ',
+    freq             TEXT NOT NULL DEFAULT 'daily',   -- daily | weekdays | interval | as_needed
+    weekdays         TEXT NOT NULL DEFAULT '',        -- "0,2,4" (Mon=0)
+    interval_days    INTEGER NOT NULL DEFAULT 1,
+    times            TEXT NOT NULL DEFAULT '08:00',   -- "08:00,20:00"
+    start_date       TEXT NOT NULL,
+    end_date         TEXT,
+    reminders        INTEGER NOT NULL DEFAULT 1,
+    active           INTEGER NOT NULL DEFAULT 1,
+    notes            TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS peptide_logs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id    INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    peptide_id    INTEGER REFERENCES peptides(id) ON DELETE SET NULL,
+    peptide_name  TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'taken',      -- taken | skipped
+    taken_at      TEXT NOT NULL,
+    scheduled_for TEXT,
+    dose_mcg      REAL,
+    units         REAL,
+    site          TEXT,
+    notes         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS peptide_logs_by_time ON peptide_logs (profile_id, taken_at);
+
+CREATE TABLE IF NOT EXISTS peptide_reminders_sent (
+    peptide_id    INTEGER NOT NULL REFERENCES peptides(id) ON DELETE CASCADE,
+    scheduled_for TEXT NOT NULL,
+    PRIMARY KEY (peptide_id, scheduled_for)
+);
+
+-- Push reminders via ntfy (https://ntfy.sh or self-hosted).
+CREATE TABLE IF NOT EXISTS notify (
+    profile_id   INTEGER PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    ntfy_server  TEXT NOT NULL DEFAULT 'https://ntfy.sh',
+    ntfy_topic   TEXT NOT NULL,
+    generic_text INTEGER NOT NULL DEFAULT 0
+);
 """
 
 BODY_FIELDS = (
@@ -137,8 +216,10 @@ def execute(sql: str, params=()) -> int:
         return cur.lastrowid
 
 
-def upsert_daily(profile_id: int, date: str, values: dict) -> None:
+def upsert_daily(profile_id: int, date: str, values: dict, table: str = "daily") -> None:
     """Merge non-null values into a day's row; never overwrite data with NULL."""
+    if table not in ("daily", "apple_daily"):
+        raise ValueError(table)
     vals = {k: v for k, v in values.items() if k in DAILY_FIELDS and v is not None}
     if not vals:
         return
@@ -147,7 +228,7 @@ def upsert_daily(profile_id: int, date: str, values: dict) -> None:
     updates = ", ".join(f"{k}=excluded.{k}" for k in vals)
     with connect() as c:
         c.execute(
-            f"INSERT INTO daily (profile_id, date, {cols}) VALUES (?, ?, {marks}) "
+            f"INSERT INTO {table} (profile_id, date, {cols}) VALUES (?, ?, {marks}) "
             f"ON CONFLICT(profile_id, date) DO UPDATE SET {updates}",
             (profile_id, date, *vals.values()),
         )

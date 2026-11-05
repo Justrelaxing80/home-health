@@ -43,12 +43,12 @@ x-casaos:
   title:
     en_us: Home Health
   tagline:
-    en_us: Household Garmin + Renpho dashboard
+    en_us: Garmin, Renpho & Apple Health dashboard + peptide tracker
   description:
     en_us: >-
-      A family health dashboard. Each profile links its own Garmin Connect and
-      Renpho accounts; steps, sleep, heart rate, HRV, Body Battery, weight and
-      body composition are synced on a schedule and charted.
+      A family health dashboard. Each profile links its own Garmin Connect,
+      Renpho and Apple Health data; steps, sleep, heart rate, HRV, weight and
+      body composition are charted, with a peptide dose log and reminders.
   icon: http://{host}:9085/static/icon.svg
   index: /
   port_map: "9085"
