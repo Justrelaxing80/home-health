@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home Health</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+      <span class="brand-text">Home Health</span>
+    </a>
+    <div class="spacer"></div>
+    <div id="topbar-actions" class="row"></div>
+  </header>
+  <main id="view" aria-live="polite"></main>
+
+  <dialog id="profile-dialog">
+    <form id="profile-form" method="dialog">
+      <h2 id="profile-dialog-title" style="margin-bottom:14px">New profile</h2>
+      <div class="field"><label for="pf-name">Name</label><input id="pf-name" required maxlength="40" autocomplete="off"></div>
+      <div class="field"><label>Color</label><div class="swatches" id="pf-colors"></div></div>
+      <div class="field"><label for="pf-units">Units</label>
+        <select id="pf-units"><option value="imperial">Imperial (lb, mi)</option><option value="metric">Metric (kg, km)</option></select></div>
+      <div class="field"><label for="pf-goal">Daily step goal</label><input id="pf-goal" type="number" min="1000" max="100000" step="500" value="10000"></div>
+      <p class="err" id="pf-err" hidden></p>
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" id="pf-save" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

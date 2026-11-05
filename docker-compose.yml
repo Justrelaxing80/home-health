@@ -1,0 +1,55 @@
+name: home-health
+
+services:
+  home-health:
+    # Built by GitHub Actions from https://github.com/Justrelaxing80/home-health
+    image: ghcr.io/justrelaxing80/home-health:latest
+    container_name: home-health
+    restart: unless-stopped
+    ports:
+      - "9085:8080"
+    volumes:
+      # ZimaOS keeps app data under /DATA/AppData/<app>
+      - /DATA/AppData/home-health:/data
+    environment:
+      TZ: America/New_York            # change to your timezone
+      SYNC_INTERVAL_MINUTES: "60"     # how often Garmin/Renpho sync; 0 disables
+      GARMIN_BACKFILL_DAYS: "30"      # history pulled on first Garmin sync
+    x-casaos:
+      envs:
+        - container: TZ
+          description:
+            en_us: Timezone used for dates on the dashboard
+        - container: SYNC_INTERVAL_MINUTES
+          description:
+            en_us: Minutes between automatic syncs (0 = manual only)
+      ports:
+        - container: "8080"
+          description:
+            en_us: Web UI
+      volumes:
+        - container: /data
+          description:
+            en_us: Database and encryption key
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: home-health
+  author: BJ
+  developer: BJ
+  category: Health
+  title:
+    en_us: Home Health
+  tagline:
+    en_us: Household Garmin + Renpho dashboard
+  description:
+    en_us: >-
+      A family health dashboard. Each profile links its own Garmin Connect and
+      Renpho accounts; steps, sleep, heart rate, HRV, Body Battery, weight and
+      body composition are synced on a schedule and charted.
+  icon: http://{host}:9085/static/icon.svg
+  index: /
+  port_map: "9085"
+  scheme: http
