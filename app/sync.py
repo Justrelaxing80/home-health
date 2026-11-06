@@ -36,6 +36,9 @@ def _run(profile_id: int, provider: str) -> None:
         result = PROVIDERS[provider](profile_id)
         log.info("sync %s profile=%s ok: %s", provider, profile_id, result)
         _set(profile_id, provider, "linked")
+    except garmin.KeyRejected as e:
+        log.warning("garmin profile=%s key rejected: %s", profile_id, e)
+        _set(profile_id, provider, "needs_relink", str(e)[:500])
     except garmin.NeedsMfa as e:
         log.warning("garmin profile=%s needs re-link: %s", profile_id, e)
         _set(profile_id, provider, "needs_relink",

@@ -59,8 +59,14 @@ of `9085:8080`.
 1. Click **Add a demo profile** to see the dashboard filled with sample data
    (delete it later from its Settings page).
 2. **Add profile** for each person, then in their **Settings**:
-   - **Garmin**: enter their Garmin Connect email/password. If the account has
-     two-step verification, Garmin sends a code and the page asks for it.
+   - **Garmin (recommended: Personal API key)**: on Garmin Connect, create a key at
+     [connect.garmin.com/app/settings/personalApiToken](https://connect.garmin.com/app/settings/personalApiToken)
+     (it starts with `GCDC_`, is shown only once, and lasts up to a year), then
+     paste it under *Or link with a Personal API key*. This is Garmin's official
+     personal API: no password and no verification codes. When the key expires,
+     the card says "needs re-link"; create a new key and paste it.
+   - **Garmin (alternative)**: enter their Garmin Connect email/password. If the
+     account has two-step verification, Garmin sends a code and the page asks for it.
    - **Scale via Garmin**: if the Renpho app is connected to Garmin Connect
      (Renpho app → Me → Third-party apps → Garmin), the Garmin link also imports
      weigh-ins (weight, BMI, body fat, water, visceral fat, metabolic age; one
@@ -79,8 +85,9 @@ of `9085:8080`.
 
 ## Things to know
 
-- **Both Garmin and Renpho integrations are unofficial.** Garmin's official API
-  is for approved businesses only, and Renpho has none, so this uses the
+- **Garmin's Personal API key link is official**
+  ([docs](https://developer.garmin.com/gc-developer-program/personal/personal-api/)).
+  The Garmin password login and the Renpho link are unofficial: they use the
   community libraries [`garminconnect`](https://github.com/cyberjunky/python-garminconnect)
   and [`renpho-api`](https://github.com/danvaneijck/renpho-api). Either company
   can change things and break sync. When that happens, the dashboard shows a

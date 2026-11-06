@@ -567,7 +567,15 @@ async function renderSettings(pid) {
           <p class="err" hidden></p>
         </form>
       </section>
-      ${providerCard("garmin", "Garmin", "Steps, sleep, resting heart rate, HRV, Body Battery, stress, activities, and scale weigh-ins (including a Renpho scale linked to Garmin Connect in the Renpho app). Uses Garmin Connect's unofficial login, as most self-hosted tools do. Your password and session are stored encrypted on this server.")}
+      ${providerCard("garmin", "Garmin", "Steps, sleep, resting heart rate, HRV, Body Battery, stress, activities, and scale weigh-ins (including a Renpho scale linked to Garmin Connect in the Renpho app). Link with a Garmin Personal API key (recommended) or your Garmin login. Keys and passwords are stored encrypted on this server.", `
+        <form class="key-form" data-prov="garmin" ${conn("garmin") ? "hidden" : ""} autocomplete="off">
+          <hr style="border:0;border-top:1px solid var(--border);margin:16px 0">
+          <h2 style="font-size:15px;margin-bottom:4px">Or link with a Personal API key (recommended)</h2>
+          <p class="note">Official Garmin access with no password or verification codes. Create a key at <a href="https://connect.garmin.com/app/settings/personalApiToken" target="_blank" rel="noopener">Garmin Connect → Personal API key</a>, copy it, and paste it here. It starts with <code>GCDC_</code>.</p>
+          <div class="field"><label>Personal API key</label><input name="api_key" type="password" required minlength="20" autocomplete="off" spellcheck="false"></div>
+          <button class="btn primary">Link with key</button>
+          <p class="err" hidden></p>
+        </form>`)}
       ${providerCard("renpho", "Renpho", "Weight and body composition from your Renpho scale via Renpho's cloud (unofficial API). Not needed if your Renpho app already sends weigh-ins to Garmin Connect, because the Garmin link picks them up. If cloud sync stops working, use CSV import below.", `
         <hr style="border:0;border-top:1px solid var(--border);margin:16px 0">
         <h2 style="font-size:15px;margin-bottom:4px">Import Renpho CSV</h2>
@@ -620,7 +628,20 @@ async function renderSettings(pid) {
     } catch (x) { err.textContent = x.message; err.hidden = false; btn.disabled = false; }
   });
   document.querySelectorAll("[data-relink]").forEach((b) => b.onclick = () => {
-    const f = $(`.link-form[data-prov="${b.dataset.relink}"]`); f.hidden = !f.hidden; if (!f.hidden) f.password.focus();
+    const f = $(`.link-form[data-prov="${b.dataset.relink}"]`); f.hidden = !f.hidden;
+    const k = $(`.key-form[data-prov="${b.dataset.relink}"]`); if (k) k.hidden = f.hidden;
+    if (!f.hidden) (k ? k.api_key : f.password).focus();
+  });
+  document.querySelectorAll(".key-form").forEach((f) => f.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $("button", f), err = $(".err", f);
+    err.hidden = true; btn.disabled = true; btn.textContent = "Checking key…";
+    try {
+      await api(`/api/profiles/${pid}/garmin/link-key`, { method: "POST", body: { api_key: f.api_key.value.trim() } });
+      toast("Garmin linked — first sync started"); route();
+    } catch (x) {
+      err.textContent = x.message; err.hidden = false;
+    } finally { btn.disabled = false; btn.textContent = "Link with key"; }
   });
   document.querySelectorAll("[data-unlink]").forEach((b) => b.onclick = async () => {
     if (!confirm("Unlink this account? Data already synced stays on the dashboard.")) return;

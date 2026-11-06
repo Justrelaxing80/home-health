@@ -68,6 +68,10 @@ class LinkIn(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class KeyIn(BaseModel):
+    api_key: str = Field(min_length=20, max_length=4000)
+
+
 class MfaIn(BaseModel):
     code: str = Field(min_length=4, max_length=12)
 
@@ -314,6 +318,17 @@ def garmin_link(pid: int, body: LinkIn):
     if status == "linked":
         sync.start(pid, "garmin")
     return {"status": status}
+
+
+@app.post("/api/profiles/{pid}/garmin/link-key")
+def garmin_link_key(pid: int, body: KeyIn):
+    _profile(pid)
+    try:
+        garmin.link_key(pid, body.api_key)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Garmin key not accepted: {e}") from e
+    sync.start(pid, "garmin")
+    return {"status": "linked"}
 
 
 @app.post("/api/profiles/{pid}/garmin/mfa")
