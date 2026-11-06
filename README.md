@@ -24,6 +24,18 @@ times (grouped into one notification, skipped if already checked off). Streaks c
 serving was checked off; today never breaks a streak until it's over. The
 dashboard shows the supplement and peptide streaks.
 
+**Barcode scanning:** tap **Scan barcode** on the Supplements tab and point the
+phone at a bottle. The product's name, brand, photo, serving size and (when
+listed) per-serving nutrition come from [Open Food Facts](https://world.openfoodfacts.org)
+and, to fill gaps, UPCitemdb's free lookup (100 a day). The sheet says which
+source each product came from. Nothing is guessed, so check it against your label.
+The barcode is saved with the supplement: scanning that bottle again checks off
+today's next serving. Unknown barcodes can be added by hand and are recognized
+from then on. Live camera scanning needs a secure page (https, or localhost). Over
+plain `http://` (for example a Tailscale IP) the scanner uses the phone's camera
+in photo mode instead, which works the same way with one extra tap. To get live
+scanning remotely, turn on HTTPS for the Tailscale address (Tailscale Serve).
+
 **Peptides tab:** today's dose checklist (log / skip / undo), compounds with
 dosing schedules (daily, specific weekdays, every N days, as needed; several
 times a day), vial tracking (reconstitution, mcg/mL, units to draw on a U-100

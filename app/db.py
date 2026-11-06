@@ -172,6 +172,9 @@ CREATE TABLE IF NOT EXISTS supplements (
     weekdays    TEXT NOT NULL DEFAULT '',            -- "0,2,4" (Mon=0)
     time_label  TEXT NOT NULL DEFAULT '',            -- Morning | With meals | ...
     remind_times TEXT NOT NULL DEFAULT '',           -- "08:00,20:00"; empty = no reminders
+    barcode     TEXT NOT NULL DEFAULT '',            -- GTIN from a scanned bottle (13 digits for UPC/EAN)
+    brand       TEXT NOT NULL DEFAULT '',
+    image_url   TEXT NOT NULL DEFAULT '',
     start_date  TEXT NOT NULL,
     active      INTEGER NOT NULL DEFAULT 1,
     notes       TEXT NOT NULL DEFAULT '',
@@ -187,6 +190,12 @@ CREATE TABLE IF NOT EXISTS supplement_logs (
     PRIMARY KEY (supplement_id, date, serving)
 );
 CREATE INDEX IF NOT EXISTS supplement_logs_by_day ON supplement_logs (profile_id, date);
+
+CREATE TABLE IF NOT EXISTS barcode_cache (
+    code       TEXT PRIMARY KEY,
+    data       TEXT NOT NULL,                        -- JSON lookup result (found or not)
+    fetched_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS supplement_reminders_sent (
     supplement_id INTEGER NOT NULL REFERENCES supplements(id) ON DELETE CASCADE,
@@ -228,6 +237,9 @@ def init() -> None:
 
 MIGRATIONS = [
     ("supplements", "remind_times", "TEXT NOT NULL DEFAULT ''"),
+    ("supplements", "barcode", "TEXT NOT NULL DEFAULT ''"),
+    ("supplements", "brand", "TEXT NOT NULL DEFAULT ''"),
+    ("supplements", "image_url", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

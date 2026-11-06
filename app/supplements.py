@@ -40,7 +40,7 @@ CATALOG = [
     {"name": "Glucosamine", "amount": 1500, "unit": "mg", "time_label": "With meals"},
     {"name": "NAC (N-acetylcysteine)", "amount": 600, "unit": "mg", "time_label": "Morning"},
 ]
-UNITS = ["g", "mg", "mcg", "IU", "mL", "capsule", "tablet", "softgel", "scoop", "serving", "drop"]
+UNITS = ["g", "mg", "mcg", "IU", "mL", "capsule", "tablet", "softgel", "gummy", "scoop", "packet", "serving", "drop"]
 TIME_LABELS = ["", "Morning", "Afternoon", "Evening", "Bedtime", "With meals", "Before workout", "After workout"]
 
 

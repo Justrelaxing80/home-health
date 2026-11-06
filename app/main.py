@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import analysis, apple, db, demo, garmin, peptides, scale, supplements, sync
+from . import analysis, apple, barcode, db, demo, garmin, peptides, scale, supplements, sync
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 STATIC = Path(__file__).parent / "static"
@@ -164,12 +164,23 @@ class SupplementIn(BaseModel):
     start_date: str | None = None
     active: bool = True
     notes: str = Field(default="", max_length=500)
+    barcode: str = Field(default="", max_length=20)
+    brand: str = Field(default="", max_length=60)
+    image_url: str = Field(default="", max_length=500)
 
     @model_validator(mode="after")
     def _check(self):
         if not HEX.match(self.color):
             raise ValueError("color must be #rrggbb")
         self.name = self.name.strip()
+        if self.barcode:
+            code = barcode.normalize(self.barcode)
+            if not code:
+                raise ValueError("barcode isn't a valid UPC/EAN")
+            self.barcode = code
+        self.brand = self.brand.strip()
+        if self.image_url and not self.image_url.startswith("https://"):
+            self.image_url = ""
         if self.start_date and not DAY.match(self.start_date):
             raise ValueError("start date must be YYYY-MM-DD")
         days = sorted({w.strip() for w in self.weekdays.split(",") if w.strip()})
@@ -536,7 +547,7 @@ def dose_log_delete(pid: int, log_id: int):
 # ---------------- supplements ----------------
 
 SUPP_COLS = ("name", "color", "amount", "unit", "servings", "freq", "weekdays", "time_label",
-             "remind_times", "start_date", "active", "notes")
+             "remind_times", "start_date", "active", "notes", "barcode", "brand", "image_url")
 
 
 def _supplement(pid: int, sid: int) -> dict:
@@ -544,6 +555,18 @@ def _supplement(pid: int, sid: int) -> dict:
     if not s:
         raise HTTPException(404, "Supplement not found")
     return s
+
+
+@app.get("/api/profiles/{pid}/barcode/{code}")
+def barcode_lookup(pid: int, code: str):
+    """Product details for a scanned barcode, plus this profile's supplement with that barcode."""
+    _profile(pid)
+    if len(code) > 20:
+        raise HTTPException(422, "barcode too long")
+    r = barcode.lookup(code)
+    mine = db.row("SELECT id FROM supplements WHERE profile_id=? AND barcode=? ORDER BY active DESC, id DESC",
+                  (pid, r["code"])) if r.get("code") else None
+    return {**r, "existing_id": mine["id"] if mine else None}
 
 
 @app.get("/api/profiles/{pid}/supplements")

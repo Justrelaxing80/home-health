@@ -46,7 +46,8 @@ async function renderSupplements(pid) {
     ${navTabs(pid, "supplements")}
     <div class="dash-head">
       <div><h1>Supplements</h1><p class="sub" style="margin:0">Daily checklist and streaks for ${esc(p.name)}</p></div>
-      <button class="btn primary" id="sup-add">＋ Add supplement</button>
+      <div class="row"><button class="btn" id="sup-scan"><span aria-hidden="true">▥</span> Scan barcode</button>
+        <button class="btn primary" id="sup-add">＋ Add supplement</button></div>
     </div>
     <div class="tiles">${tiles.map((x) => `
       <div class="tile"><div class="label">${esc(x.label)}</div>
@@ -71,11 +72,11 @@ async function renderSupplements(pid) {
         <h2 style="margin-bottom:10px">My supplements</h2>
         ${sups.map((s) => `<div class="vial${s.active ? "" : " paused"}">
           <div class="row" style="justify-content:space-between">
-            <b class="row" style="gap:8px"><span class="pdot" style="background:${esc(s.color)}"></span>${esc(s.name)}</b>
+            <b class="row" style="gap:8px">${s.image_url ? `<img class="sup-thumb" src="${esc(s.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span class="pdot" style="background:${esc(s.color)}"></span>${esc(s.name)}</b>
             <span class="row" style="gap:8px">${s.active ? `<span class="chip ${s.streak.current ? "taken" : ""}">${s.streak.current}-day streak</span>` : `<span class="chip">Paused</span>`}
               <button class="btn small" data-sedit="${s.id}">Edit</button></span>
           </div>
-          <div class="note">${fmtAmount(s)} · ${suppSchedule(s)}${s.active && s.streak.best > s.streak.current ? ` · best ${days(s.streak.best)}` : ""}</div>
+          <div class="note">${s.brand ? `${esc(s.brand)} · ` : ""}${fmtAmount(s)} · ${suppSchedule(s)}${s.active && s.streak.best > s.streak.current ? ` · best ${days(s.streak.best)}` : ""}</div>
           ${s.remind_times ? `<div class="note">Reminders: ${s.remind_times.split(",").map(hhmmLabel).join(", ")}${notify ? "" : ` <span class="err-inline">(turn on reminders below)</span>`}</div>` : ""}
           ${s.notes ? `<div class="note">${esc(s.notes)}</div>` : ""}
         </div>`).join("")}
@@ -86,7 +87,7 @@ async function renderSupplements(pid) {
         <div class="catalog">${data.catalog.map((c, i) => {
           const has = added.has(c.name.toLowerCase());
           return `<button class="cat-item" data-cat="${i}" ${has ? "disabled" : ""}><b>${has ? "✓ " : "＋ "}${esc(c.name)}</b><span>${nf2.format(c.amount)} ${esc(c.unit)}</span></button>`;
-        }).join("")}<button class="cat-item custom" id="sup-custom"><b>＋ Something else</b><span>Add your own</span></button></div>
+        }).join("")}<button class="cat-item custom" id="sup-scan2"><b>▥ Scan a bottle</b><span>Use the barcode</span></button><button class="cat-item custom" id="sup-custom"><b>＋ Something else</b><span>Add your own</span></button></div>
       </section>
       <section class="card" id="sup-notify">${notifyHtml(notify)}
         <p class="note">Set a reminder time on each supplement with <b>Edit</b>. Supplements due at the same time come as one notification, and none is sent if it's already checked off.</p></section>
@@ -103,6 +104,8 @@ async function renderSupplements(pid) {
   const add = () => openSupplementDialog(pid, null, data);
   $("#sup-add").onclick = add;
   $("#sup-custom").onclick = add;
+  $("#sup-scan").onclick = () => openScanner(pid, data);
+  $("#sup-scan2").onclick = () => openScanner(pid, data);
   document.querySelectorAll("[data-sedit]").forEach((b) => b.onclick = () => openSupplementDialog(pid, byId[b.dataset.sedit], data));
   document.querySelectorAll("[data-cat]").forEach((b) => b.onclick = async () => {
     const c = data.catalog[+b.dataset.cat];
@@ -157,10 +160,12 @@ function gridHtml(data, active) {
       <span><i class="g-cell missed"></i>Missed</span><span><i class="g-cell off"></i>Not scheduled</span></div>`;
 }
 
-function openSupplementDialog(pid, x, data) {
+function openSupplementDialog(pid, x, data, prefill = null) {
   const editing = !!x;
   const v = x || { name: "", color: PROFILE_COLORS[data.supplements.length % PROFILE_COLORS.length], amount: null, unit: "mg",
-    servings: 1, freq: "daily", weekdays: "", time_label: "Morning", remind_times: "", notes: "", active: 1 };
+    servings: 1, freq: "daily", weekdays: "", time_label: "Morning", remind_times: "", notes: "", active: 1,
+    barcode: "", brand: "", image_url: "", ...(prefill || {}) };
+  let barcode = v.barcode || "";
   const wd = (v.weekdays || "").split(",");
   const units = data.units.includes(v.unit) || !v.unit ? data.units : [v.unit, ...data.units];
   const d = modal(`<form method="dialog" id="sup-form">
@@ -181,6 +186,8 @@ function openSupplementDialog(pid, x, data) {
     <div class="field"><label>Reminder times (optional)</label><div id="sp-times"></div>
       <button type="button" class="linkbtn" id="sp-addtime">＋ Add a reminder</button>
       <p class="note" style="margin:4px 0 0">Sent through the Reminders settings on this tab, only if the supplement isn't checked off yet.</p></div>
+    <div class="field"><label for="sp-brand">Brand</label><input id="sp-brand" maxlength="60" value="${esc(v.brand || "")}" placeholder="optional"></div>
+    <p class="note" id="sp-code-row" ${barcode ? "" : "hidden"}>Barcode <b>${esc(fmtCode(barcode))}</b>: scanning this bottle checks it off. <button type="button" class="linkbtn" id="sp-code-rm">Remove</button></p>
     <div class="field"><label for="sp-notes">Notes</label><textarea id="sp-notes" rows="2" maxlength="500" placeholder="Brand, with food, etc.">${esc(v.notes || "")}</textarea></div>
     ${editing ? `<label class="check"><input type="checkbox" id="sp-active" ${v.active ? "checked" : ""}> Active (uncheck to pause; paused supplements don't affect streaks)</label>` : ""}
     <p class="err" hidden></p>
@@ -192,6 +199,7 @@ function openSupplementDialog(pid, x, data) {
     </div></form>`, "wide");
 
   renderSwatches($("#sp-colors", d), v.color);
+  $("#sp-code-rm", d).onclick = () => { barcode = ""; $("#sp-code-row", d).hidden = true; };
   const timesEl = $("#sp-times", d);
   const addTime = (t) => {
     const row = document.createElement("div");
@@ -232,6 +240,7 @@ function openSupplementDialog(pid, x, data) {
       freq: freq.value, weekdays: [...d.querySelectorAll(".daypicks input:checked")].map((i) => i.value).join(","),
       time_label: $("#sp-time", d).value, notes: $("#sp-notes", d).value,
       remind_times: [...timesEl.querySelectorAll("input")].map((i) => i.value).filter(Boolean).join(","),
+      brand: $("#sp-brand", d).value, barcode, image_url: v.image_url || "",
       active: editing ? $("#sp-active", d).checked : true,
     };
     if (editing && body.servings < v.servings && !confirm(`Lower to ${body.servings} serving(s) a day? Check-offs above that are removed.`)) return;
