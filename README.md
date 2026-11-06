@@ -25,16 +25,31 @@ serving was checked off; today never breaks a streak until it's over. The
 dashboard shows the supplement and peptide streaks.
 
 **Barcode scanning:** tap **Scan barcode** on the Supplements tab and point the
-phone at a bottle. The product's name, brand, photo, serving size and (when
-listed) per-serving nutrition come from [Open Food Facts](https://world.openfoodfacts.org)
-and, to fill gaps, UPCitemdb's free lookup (100 a day). The sheet says which
-source each product came from. Nothing is guessed, so check it against your label.
-The barcode is saved with the supplement: scanning that bottle again checks off
-today's next serving. Unknown barcodes can be added by hand and are recognized
-from then on. Live camera scanning needs a secure page (https, or localhost). Over
-plain `http://` (for example a Tailscale IP) the scanner uses the phone's camera
-in photo mode instead, which works the same way with one extra tap. To get live
-scanning remotely, turn on HTTPS for the Tailscale address (Tailscale Serve).
+phone at a bottle. Product details come from free databases, asked in parallel:
+the [NIH Dietary Supplement Label Database](https://dsld.od.nih.gov) (about
+200,000 US supplement labels, with the amount of every ingredient per serving),
+[Open Food Facts](https://world.openfoodfacts.org), and when those miss,
+[USDA FoodData Central](https://fdc.nal.usda.gov) branded foods and UPCitemdb's
+free lookup (100 a day). The best match leads and the others fill its gaps; the
+sheet names its sources. Nothing is guessed, so check it against your label.
+If no database knows a barcode, **Search by name** finds the product and saves
+the barcode with it. The barcode is stored with the supplement: scanning that
+bottle again checks off today's next serving. FoodData Central uses a shared
+demo key with a low hourly limit; set `FDC_API_KEY` to your own free key from
+[api.data.gov](https://api.data.gov/signup/) if you scan a lot of foods.
+
+**Live scanning and HTTPS:** browsers only allow live camera video on secure
+pages, so the app answers both `http://` and `https://` on the same port (9085),
+using a certificate from its own small certificate authority (created on first
+start, kept in the data folder). Opening the scanner on a plain-http address
+shows **Switch to live scanning**, a short guide to trusting that certificate on
+the phone once (iPhone: download it, install the profile, then turn it on under
+Settings > General > About > Certificate Trust Settings). You can also skip that
+and accept the browser's warning. The certificate covers every home-network or
+Tailscale address the app has been opened at, and its authority is limited to
+private, Tailscale and local addresses, so it can't vouch for any public site.
+Set `HTTPS=off` to serve plain http only, or `HTTPS_HOSTS` (comma-separated) to
+pre-add addresses such as a bare hostname.
 
 **Peptides tab:** today's dose checklist (log / skip / undo), compounds with
 dosing schedules (daily, specific weekdays, every N days, as needed; several

@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import analysis, apple, barcode, db, demo, garmin, peptides, scale, supplements, sync
+from . import analysis, apple, barcode, db, demo, garmin, peptides, scale, supplements, sync, tls
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("home-health")
 STATIC = Path(__file__).parent / "static"
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -567,6 +568,49 @@ def barcode_lookup(pid: int, code: str):
     mine = db.row("SELECT id FROM supplements WHERE profile_id=? AND barcode=? ORDER BY active DESC, id DESC",
                   (pid, r["code"])) if r.get("code") else None
     return {**r, "existing_id": mine["id"] if mine else None}
+
+
+@app.get("/api/products/search")
+def product_search(q: str = ""):
+    """Find a product by name when its barcode isn't in any database."""
+    return barcode.search(q[:80])
+
+
+@app.get("/api/products/{source}/{ref}")
+def product_detail(source: Literal["dsld", "off"], ref: str):
+    if not re.fullmatch(r"\d{1,14}", ref):
+        raise HTTPException(422, "bad product reference")
+    try:
+        p = barcode.product(source, ref)
+    except Exception as e:  # noqa: BLE001
+        log.warning("product %s/%s failed: %s", source, ref, e)
+        raise HTTPException(502, "Couldn't reach the product database. Try again.") from e
+    if not p:
+        raise HTTPException(404, "Product not found")
+    return {"found": True, **p}
+
+
+# ---------------- https for the live scanner ----------------
+
+@app.middleware("http")
+async def _note_host(request: Request, call_next):
+    # Every address the app is opened at (Tailscale IP, LAN IP, ...) goes on its https certificate.
+    if tls.ACTIVE:
+        tls.note_host(request.headers.get("host", ""))
+    return await call_next(request)
+
+
+@app.get("/api/tls")
+def tls_info(request: Request):
+    return {**tls.info(), "secure": request.url.scheme == "https"}
+
+
+@app.get("/api/tls/ca.crt")
+def tls_ca():
+    if not tls.ACTIVE:
+        raise HTTPException(404, "https isn't enabled")
+    # No Content-Disposition: iOS Safari then offers to install it as a profile.
+    return Response(tls.ca_der(), media_type="application/x-x509-ca-cert")
 
 
 @app.get("/api/profiles/{pid}/supplements")

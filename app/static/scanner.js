@@ -1,9 +1,12 @@
 /* Home Health - barcode scanner for supplements.
-   Full-screen camera with a scan window; the result opens as a bottom sheet with
-   the product's label info. Live scanning needs a secure context (HTTPS or
-   localhost); otherwise it falls back to taking a photo of the barcode, which
-   works over plain http too. Decoding: the browser's BarcodeDetector when it
-   exists (Chrome/Android), else ZXing (vendored, loaded on first use). */
+   Full-screen live camera with a scan window; the result opens as a bottom sheet
+   with the product's label info. Browsers only allow live camera video on https
+   pages. The server answers https on the same port (its own certificate), so on
+   a plain-http visit the scanner offers to switch over, with a one-time guide for
+   trusting the certificate. Until then it uses the camera's photo mode.
+   Decoding: the browser's BarcodeDetector when it exists (Chrome/Android), else
+   ZXing (vendored, loaded on first use). Unknown barcodes can be matched by
+   searching the product name. */
 "use strict";
 
 const SCAN_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e"];
@@ -83,7 +86,13 @@ const ICON = {
   keys: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6 10h1M9.5 10h1M13 10h1M16.5 10h1M7 14h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   photo: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="13.2" r="3.4" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>',
   barcode: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 5v14M6 5v14M9.5 5v14M12 5v14M15.5 5v14M18 5v14M21 5v14" stroke="currentColor" stroke-width="1.6" stroke-dasharray="14 0"/></svg>',
+  search: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  live: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M4 12h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
 };
+
+const SOURCE_TAG = { dsld: "NIH supplement label", off: "Open Food Facts" };
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const secureUrl = () => `https://${location.host}${location.pathname}?scan=1${location.hash}`;
 
 /* Entry point. `data` is the supplements page payload (catalog, units, time labels, list). */
 async function openScanner(pid, data) {
@@ -105,12 +114,14 @@ async function openScanner(pid, data) {
       <div class="scan-illus">${ICON.barcode.replace(/18/g, "64")}</div>
       <h2>Take a photo of the barcode</h2>
       <p>Live scanning needs a secure (https) connection, so this uses your camera's photo mode. Fill the frame with the barcode and keep it sharp.</p>
+      <button class="scan-pill primary scan-golive" data-x="golive" hidden>${ICON.live}<span>Switch to live scanning</span></button>
     </div>
     <div class="scan-bottom">
       <p class="scan-hint">Line up the barcode inside the frame</p>
       <div class="scan-actions">
         <button class="scan-pill" data-x="manual">${ICON.keys}<span>Enter code</span></button>
-        <button class="scan-pill" data-x="photo">${ICON.photo}<span>Use a photo</span></button>
+        <button class="scan-pill" data-x="search">${ICON.search}<span>Search</span></button>
+        <button class="scan-pill" data-x="photo">${ICON.photo}<span>Photo</span></button>
       </div>
     </div>
     <input type="file" accept="image/*" capture="environment" hidden>
@@ -232,13 +243,100 @@ async function openScanner(pid, data) {
 
   function showNotFound(r) {
     showSheet(`<h2 class="sheet-title">No match for this barcode</h2>
-      <p class="note">${esc(fmtCode(r.code))} isn't in Open Food Facts or UPCitemdb yet${r.error ? ` (${esc(r.error)})` : ""}. Add it yourself and this barcode will be recognized next time.</p>
-      <div class="sheet-actions">${againBtn()}<button class="btn primary" data-x="manual-add">Add it manually</button></div>`);
+      <p class="note">${esc(fmtCode(r.code))} isn't in the NIH supplement label database, Open Food Facts, USDA FoodData Central or UPCitemdb${r.error ? ` (${esc(r.error)})` : ""}.
+        Search for the product by name and this barcode will be saved with it, so it's recognized next time.</p>
+      <div class="sheet-actions"><button class="btn" data-x="manual-add">Add it manually</button><button class="btn primary" data-x="find">${ICON.search} Search by name</button></div>
+      <div class="sheet-actions" style="margin-top:6px">${againBtn()}</div>`);
     wireAgain();
     $('[data-x="manual-add"]', body).onclick = () => {
       close();
       openSupplementDialog(pid, null, data, { barcode: r.code });
     };
+    $('[data-x="find"]', body).onclick = () => showSearch(r.code);
+  }
+
+  // ---- search by name (barcode unknown, or no barcode at all) ----
+  function showSearch(code, q = "") {
+    busy = true; clearTimeout(timer);
+    if (stream) video.pause();
+    showSheet(`<h2 class="sheet-title">Find the product</h2>
+      <p class="note">${code ? `Pick the match and barcode ${esc(fmtCode(code))} is saved with it.` : "Search supplement labels and Open Food Facts."}</p>
+      <form class="sheet-form search-form" autocomplete="off" role="search">
+        <div class="search-row"><input id="sc-q" type="search" enterkeyhint="search" maxlength="80" required
+          placeholder="Brand and product, e.g. Nature Made D3" aria-label="Product name" value="${esc(q)}">
+          <button class="btn primary">Search</button></div>
+      </form>
+      <div class="search-results" aria-live="polite"></div>
+      <div class="sheet-actions" style="margin-top:10px">${againBtn()}</div>`);
+    wireAgain();
+    const inp = $("#sc-q", body), list = $(".search-results", body);
+    setTimeout(() => inp.focus(), 50);
+    let seq = 0;
+    $(".search-form", body).onsubmit = async (e) => {
+      e.preventDefault();
+      const term = inp.value.trim();
+      if (term.length < 2) return;
+      const my = ++seq;
+      inp.blur();
+      list.innerHTML = `<div class="sheet-loading"><span class="spinner" aria-hidden="true"></span>Searching…</div>`;
+      let res;
+      try { res = await api(`/api/products/search?q=${encodeURIComponent(term)}`); }
+      catch (x) { if (my === seq) list.innerHTML = `<p class="err">${esc(x.message)}</p>`; return; }
+      if (my !== seq || closed) return;
+      if (!res.results.length) {
+        list.innerHTML = `<p class="note">${esc(res.error || "Nothing found. Try fewer words, or just the brand and main ingredient.")}</p>`;
+        return;
+      }
+      list.innerHTML = `<ul class="result-list">${res.results.map((p, i) => `<li><button type="button" class="result" data-i="${i}">
+          ${p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'result-ph'}))">` : `<span class="result-ph">${ICON.barcode}</span>`}
+          <span class="result-text"><b>${esc(p.name)}</b><small>${esc([p.brand, p.detail].filter(Boolean).join(" · "))}</small>
+          <small class="result-src">${esc(SOURCE_TAG[p.source] || p.source)}${p.off_market ? " · discontinued" : ""}</small></span></button></li>`).join("")}</ul>`;
+      list.querySelectorAll(".result").forEach((b) => b.onclick = async () => {
+        const p = res.results[+b.dataset.i];
+        list.querySelectorAll(".result").forEach((x) => (x.disabled = true));
+        b.classList.add("loading");
+        let full;
+        try { full = await api(`/api/products/${p.source}/${encodeURIComponent(p.ref)}`); }
+        catch (x) { toast(x.message); list.querySelectorAll(".result").forEach((y) => (y.disabled = false)); b.classList.remove("loading"); return; }
+        if (closed) return;
+        showProduct({ ...full, code: code || full.code || "", image_url: full.image_url || p.image_url || "" }, () => showSearch(code, term));
+      });
+    };
+    if (q) $(".search-form", body).requestSubmit();
+  }
+
+  // ---- switching to https for live scanning ----
+  let tlsInfo = null;
+  async function checkLive() {
+    if (window.isSecureContext) return;
+    try { tlsInfo = await api("/api/tls"); } catch { return; }
+    if (!tlsInfo.enabled || closed) return;
+    const b = $('[data-x="golive"]', el); b.hidden = false;
+    b.onclick = showLiveSetup;
+    $(".scan-photo-mode p", el).textContent = "Your browser blocks live camera video on this http address. Switch to the secure address for live scanning, or take a photo of the barcode.";
+  }
+
+  function showLiveSetup() {
+    busy = true;
+    const ios = isIOS();
+    const steps = ios ? `
+        <li><a href="/api/tls/ca.crt">Download the certificate</a> and tap <b>Allow</b>.</li>
+        <li>Open <b>Settings</b>, tap <b>Profile Downloaded</b> near the top, then <b>Install</b>.</li>
+        <li>Go to <b>Settings › General › About › Certificate Trust Settings</b> and turn on <b>${esc("Home Health local CA")}</b>.</li>
+        <li>Come back and tap <b>Open secure page</b>.</li>` : `
+        <li><a href="/api/tls/ca.crt" download>Download the certificate</a>.</li>
+        <li>Open <b>Settings</b>, search for <b>CA certificate</b>, choose <b>Install anyway</b> and pick <b>home-health-ca.crt</b> from Downloads.</li>
+        <li>Come back and tap <b>Open secure page</b>.</li>`;
+    showSheet(`<h2 class="sheet-title">Turn on live scanning</h2>
+      <p class="note">Browsers only allow live camera video on secure (https) pages. Home Health serves one at the same address with its own certificate. Trust that certificate once on this phone:</p>
+      <ol class="setup-steps">${steps}</ol>
+      <p class="note">Or skip the setup: open the secure page and accept the browser's warning${ios ? " (Show Details › visit this website)" : " (Advanced › Proceed)"}. You may need to do that again later.</p>
+      <details class="note setup-more"><summary>Is this safe?</summary>
+        The certificate was created by your Home Health server and only works for home-network and Tailscale addresses,
+        so it can't be used to impersonate any public website. Fingerprint (SHA-256):
+        <code>${esc(tlsInfo.ca_fingerprint || "")}</code></details>
+      <div class="sheet-actions"><button class="btn" data-x="cancel">Not now</button><a class="btn primary" href="${esc(secureUrl())}" data-x="open-secure">Open secure page</a></div>`);
+    $('[data-x="cancel"]', body).onclick = () => { hideSheet(); busy = false; };
   }
 
   function productHead(r) {
@@ -284,7 +382,7 @@ async function openScanner(pid, data) {
     };
   }
 
-  function showProduct(r) {
+  function showProduct(r, back = null) {
     const nut = r.nutrition || [];
     const big = nut.filter((n) => ["Calories", "Protein", "Carbs", "Fat"].includes(n.label));
     const rest = nut.filter((n) => !big.includes(n));
@@ -297,7 +395,7 @@ async function openScanner(pid, data) {
       </dl>
       ${big.length ? `<div class="macro-row">${big.map((n) => `<div class="macro"><b>${esc(nf2.format(n.value))}<small>${n.unit === "kcal" ? "" : esc(n.unit)}</small></b><span>${esc(n.label)}</span></div>`).join("")}</div>` : ""}
       ${rest.length ? `<p class="note prod-micro">${rest.map((n) => `${esc(n.label)} ${esc(nf2.format(n.value))} ${esc(n.unit)}`).join(" · ")}</p>` : ""}
-      ${nut.length ? `<p class="note prod-per">Per serving, as listed by ${esc(r.source.split(" + ")[0])}.</p>` : ""}
+      ${nut.length ? `<p class="note prod-per">Per serving${r.serving_text ? ` (${esc(r.serving_text)})` : ""}.</p>` : ""}
       <form class="sheet-form" autocomplete="off">
         <div class="grid2">
           <div class="field"><label for="sc-amount">Amount per serving</label><input id="sc-amount" type="number" min="0" step="any" value="${r.amount ?? ""}" placeholder="from the label"></div>
@@ -311,9 +409,10 @@ async function openScanner(pid, data) {
           <button type="button" class="btn" data-x="more">More options</button>
           <button class="btn primary" data-x="add">Add to supplements</button>
         </div>
-        <div class="sheet-actions" style="margin-top:6px">${againBtn()}</div>
+        <div class="sheet-actions" style="margin-top:6px">${back ? `<button type="button" class="btn" data-x="back">Back to results</button>` : ""}${againBtn()}</div>
       </form>`);
     wireAgain();
+    if (back) $('[data-x="back"]', body).onclick = back;
     let servings = 1;
     body.querySelectorAll("#sc-serv button").forEach((b) => b.onclick = () => {
       servings = +b.dataset.n;
@@ -358,6 +457,7 @@ async function openScanner(pid, data) {
   // ---- wiring ----
   $('[data-x="close"]', el).onclick = close;
   $('[data-x="manual"]', el).onclick = showManual;
+  $('[data-x="search"]', el).onclick = () => showSearch("");
   $('[data-x="photo"]', el).onclick = () => file.click();
   file.onchange = async () => {
     const f = file.files[0]; file.value = "";
@@ -379,7 +479,7 @@ async function openScanner(pid, data) {
   // Tap on the dimmed camera area above the sheet goes back to scanning.
   $(".scan-shade", el).onclick = () => { if (!sheet.hidden && stream) resume(); };
 
-  if (live) startCamera(); else photoMode(null);
+  if (live) startCamera(); else { photoMode(null); checkLive(); }
 }
 
 function fmtCode(c) {

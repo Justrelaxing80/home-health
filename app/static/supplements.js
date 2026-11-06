@@ -106,6 +106,11 @@ async function renderSupplements(pid) {
   $("#sup-custom").onclick = add;
   $("#sup-scan").onclick = () => openScanner(pid, data);
   $("#sup-scan2").onclick = () => openScanner(pid, data);
+  // Arrived from the scanner's "Open secure page" (https): go straight back into live scanning.
+  if (new URLSearchParams(location.search).get("scan") === "1") {
+    history.replaceState(null, "", location.pathname + location.hash);
+    openScanner(pid, data);
+  }
   document.querySelectorAll("[data-sedit]").forEach((b) => b.onclick = () => openSupplementDialog(pid, byId[b.dataset.sedit], data));
   document.querySelectorAll("[data-cat]").forEach((b) => b.onclick = async () => {
     const c = data.catalog[+b.dataset.cat];
