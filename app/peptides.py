@@ -12,7 +12,7 @@ import os
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import db
+from . import db, streak
 
 log = logging.getLogger("home-health.peptides")
 
@@ -166,7 +166,8 @@ def history(profile_id: int, days: int = 30) -> dict:
     suggested = min(sites, key=lambda s: s["last"] or "")["site"]
     return {"logs": logs, "due": due, "taken": taken_sched,
             "adherence": round(100 * min(taken_sched, due) / due) if due else None,
-            "sites": sites, "suggested_site": suggested, "days": days}
+            "sites": sites, "suggested_site": suggested, "days": days,
+            "streak": streak_info(profile_id)}
 
 
 def summary(profile_id: int) -> dict | None:
@@ -184,7 +185,30 @@ def summary(profile_id: int) -> dict | None:
         cands = [(p["next_dose"], p["name"]) for p in list_peptides(profile_id) if p["next_dose"]]
         nxt = {"scheduled_for": min(cands)[0], "name": min(cands)[1]} if cands else None
     return {"scheduled": len(view["doses"]), "taken": taken, "overdue": len(overdue),
+            "streak": streak_info(profile_id),
             "next": {"scheduled_for": nxt["scheduled_for"], "name": nxt["name"]} if nxt else None}
+
+
+def streak_info(profile_id: int) -> dict:
+    """Consecutive days on which every scheduled dose was logged as taken."""
+    t = now_local().date()
+    peps = db.rows("SELECT * FROM peptides WHERE profile_id=? AND active=1 AND freq<>'as_needed'", (profile_id,))
+    if not peps:
+        return {"current": 0, "best": 0, "today": None}
+    earliest = min(date.fromisoformat(p["start_date"]) for p in peps)
+    taken = {(r["peptide_id"], r["d"]): r["n"] for r in db.rows(
+        "SELECT peptide_id, substr(scheduled_for,1,10) AS d, COUNT(*) AS n FROM peptide_logs "
+        "WHERE profile_id=? AND status='taken' AND scheduled_for IS NOT NULL AND scheduled_for>=? "
+        "GROUP BY peptide_id, d", (profile_id, (t - timedelta(days=730)).isoformat()))}
+
+    def status(d: date):
+        due = [(p, len(_times(p))) for p in peps if scheduled_on(p, d) and _times(p)]
+        if not due:
+            return None
+        ok = all(taken.get((p["id"], d.isoformat()), 0) >= n for p, n in due)
+        return "done" if ok else "missed"
+
+    return streak.compute(status, t, earliest)
 
 
 # ---------------- reminders (ntfy) ----------------

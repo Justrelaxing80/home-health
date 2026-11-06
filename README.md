@@ -3,12 +3,25 @@
 A household health dashboard for ZimaOS. Each family member gets a profile and
 links their own **Garmin Connect**, **Renpho**, and **Apple Health** data; the
 app charts it all on one page. Switch people from the profile menu in the
-top-right corner. Each profile also has a **Peptides** tab for tracking doses.
+top-right corner. Each profile also has **Supplements** and **Peptides** tabs.
 
 **Shows:** weight, body fat, visceral fat (Renpho/Apple) · steps vs. goal, sleep and
 sleep stages, sleep score, resting HR, HRV, Body Battery, stress,
 recent activities (Garmin/Apple). When Garmin and Apple both report a day, Garmin's
 numbers are used and Apple fills the gaps.
+
+**Daily summary:** a short paragraph at the top of the dashboard comparing the
+latest sleep, resting HR, HRV, steps, Body Battery/stress, weight/body fat and
+workouts with your own recent averages, plus today's supplement and peptide
+progress. It is generated from stored readings only (no AI, no estimates); each
+number names the day it came from, and metrics with no recent data are left out.
+
+**Supplements tab:** a daily check-off list (several servings a day, specific
+weekdays), a 14-day consistency grid, per-supplement and overall streaks, and a
+one-tap list of the 25 most common supplements (protein, creatine, D3, B12,
+fish oil, magnesium, ...) plus your own. Streaks count days where every scheduled
+serving was checked off; today never breaks a streak until it's over. The
+dashboard shows the supplement and peptide streaks.
 
 **Peptides tab:** today's dose checklist (log / skip / undo), compounds with
 dosing schedules (daily, specific weekdays, every N days, as needed; several
@@ -84,6 +97,7 @@ DATA_DIR=./data .venv/Scripts/python -m uvicorn app.main:app --port 9085 --reloa
 ```
 
 Layout: `app/main.py` (API), `garmin.py` / `scale.py` / `apple.py` (integrations),
-`peptides.py` (schedules, vial math, ntfy reminders),
+`peptides.py` (schedules, vial math, ntfy reminders), `supplements.py`,
+`streak.py`, `analysis.py` (daily summary),
 `sync.py` (scheduler), `db.py` (SQLite), `static/` (dashboard, no build step;
 Chart.js 4.4.1 is vendored in `static/vendor`).

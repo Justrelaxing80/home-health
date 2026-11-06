@@ -93,11 +93,12 @@ async function route() {
   if (hash === "#/") return renderPicker();
   if ((m = hash.match(/^#\/p\/(\d+)\/settings$/))) return renderSettings(+m[1]);
   if ((m = hash.match(/^#\/p\/(\d+)\/peptides$/))) return renderPeptides(+m[1]);
+  if ((m = hash.match(/^#\/p\/(\d+)\/supplements$/))) return renderSupplements(+m[1]);
   if ((m = hash.match(/^#\/p\/(\d+)$/))) return renderDashboard(+m[1]);
   location.hash = "#/";
 }
 
-const SECTIONS = [["health", "Health", ""], ["peptides", "Peptides", "/peptides"], ["settings", "Settings", "/settings"]];
+const SECTIONS = [["health", "Health", ""], ["supplements", "Supplements", "/supplements"], ["peptides", "Peptides", "/peptides"], ["settings", "Settings", "/settings"]];
 
 function navTabs(pid, section) {
   return `<nav class="tabs" aria-label="Sections">${SECTIONS.map(([key, label, suffix]) =>
@@ -338,8 +339,19 @@ async function renderDashboard(pid) {
   if (bb) tiles.push({ label: "Body Battery", value: bb.body_battery_high, unit: "", meta: `Low ${bb.body_battery_low ?? "–"} · ${dayLabel(bb.date)}` });
   const stress = lastWith(d.daily, "avg_stress");
   if (stress) tiles.push({ label: "Stress", value: stress.avg_stress, unit: "avg", meta: dayLabel(stress.date) });
+
+  // ---- streaks ----
+  const streakTiles = [];
+  const streakMeta = (st, extra) => [extra, st.best > st.current ? `best ${st.best}` : ""].filter(Boolean).join(" · ");
+  const sup = d.supplements;
+  if (sup) streakTiles.push({ label: "Supplement streak", href: `#/p/${pid}/supplements`,
+    value: sup.streak.current, unit: sup.streak.current === 1 ? "day" : "days", flame: sup.streak.current > 0,
+    meta: streakMeta(sup.streak, sup.due ? `${sup.taken}/${sup.due} servings today` : "None due today") });
   const pep = d.peptides;
-  if (pep) tiles.push({ label: "Peptides today", href: `#/p/${pid}/peptides`,
+  if (pep) streakTiles.push({ label: "Peptide streak", href: `#/p/${pid}/peptides`,
+    value: pep.streak.current, unit: pep.streak.current === 1 ? "day" : "days", flame: pep.streak.current > 0,
+    meta: streakMeta(pep.streak, pep.scheduled ? `${pep.taken}/${pep.scheduled} doses today` : "None due today") });
+  if (pep) streakTiles.push({ label: "Peptides today", href: `#/p/${pid}/peptides`,
     value: pep.scheduled ? `${pep.taken}/${pep.scheduled}` : "–", unit: pep.scheduled ? "taken" : "",
     meta: pep.overdue ? `${pep.overdue} overdue` : pep.next ? `Next: ${pep.next.name} ${whenLabel(pep.next.scheduled_for)}` : "Nothing scheduled",
     warn: pep.overdue > 0 });
@@ -355,11 +367,9 @@ async function renderDashboard(pid) {
         ${RANGES.map(([n, l]) => `<button data-days="${n}" aria-pressed="${n === days}">${l}</button>`).join("")}
       </div>
     </div>
-    ${tiles.length ? `<div class="tiles">${tiles.map((x) => `
-      <${x.href ? `a href="${x.href}"` : "div"} class="tile${x.href ? " link" : ""}${x.warn ? " warn" : ""}"><div class="label">${esc(x.label)}</div>
-        <div class="value">${esc(x.value)}${x.unit ? `<small>${esc(x.unit)}</small>` : ""}</div>
-        ${x.bar != null ? `<div class="bar" title="${nf0.format(x.bar)}% of ${nf0.format(p.step_goal)} goal"><span style="width:${x.bar}%"></span></div>` : ""}
-        <div class="meta">${esc(x.meta || "")}</div></${x.href ? "a" : "div"}>`).join("")}</div>` : ""}
+    ${analysisCard(d.analysis)}
+    ${tilesHtml(streakTiles, p)}
+    ${tilesHtml(tiles, p)}
     <div class="charts" id="charts"></div>
     <section class="card activities" id="activities"></section>`;
 
@@ -468,6 +478,24 @@ async function renderDashboard(pid) {
     const b = $("#sync-btn"); if (b) { b.disabled = true; b.textContent = "Syncing…"; }
     pollUntilIdle(pid, () => route());
   }
+}
+
+function tilesHtml(tiles, p) {
+  if (!tiles.length) return "";
+  return `<div class="tiles">${tiles.map((x) => `
+      <${x.href ? `a href="${x.href}"` : "div"} class="tile${x.href ? " link" : ""}${x.warn ? " warn" : ""}"><div class="label">${esc(x.label)}</div>
+        <div class="value">${x.flame ? `<span class="flame" aria-hidden="true">🔥</span>` : ""}${esc(x.value)}${x.unit ? `<small>${esc(x.unit)}</small>` : ""}</div>
+        ${x.bar != null ? `<div class="bar" title="${nf0.format(x.bar)}% of ${nf0.format(p.step_goal)} goal"><span style="width:${x.bar}%"></span></div>` : ""}
+        <div class="meta">${esc(x.meta || "")}</div></${x.href ? "a" : "div"}>`).join("")}</div>`;
+}
+
+function analysisCard(a) {
+  if (!a) return "";
+  return `<section class="card analysis">
+    <h2>Daily summary <span class="note">· ${esc(new Date(a.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }))}</span></h2>
+    <p>${esc(a.text)}</p>
+    <p class="note">Written only from your synced and logged data. Each number is a stored reading or an average of them, and metrics without recent data are left out.</p>
+  </section>`;
 }
 
 function dayLabel(iso) {

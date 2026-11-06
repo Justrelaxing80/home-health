@@ -73,6 +73,8 @@ async function renderPeptides(pid) {
   }
   tiles.push({ label: "30-day adherence", value: hist.adherence == null ? "–" : hist.adherence, unit: hist.adherence == null ? "" : "%",
     meta: hist.due ? `${hist.taken} of ${hist.due} scheduled doses logged` : "No scheduled doses yet" });
+  if (hist.streak) tiles.push({ label: "Streak", value: hist.streak.current, unit: hist.streak.current === 1 ? "day" : "days",
+    meta: hist.streak.best > hist.streak.current ? `Best ${hist.streak.best} · every scheduled dose taken` : "Days with every scheduled dose taken" });
   const next = peps.filter((x) => x.next_dose && x.active).sort((a, b) => a.next_dose.localeCompare(b.next_dose))[0];
   tiles.push({ label: "Next dose", value: next ? timeOf(next.next_dose) : "–", unit: "",
     meta: next ? `${next.name} · ${dayLabel(next.next_dose.slice(0, 10))}` : "Nothing scheduled" });

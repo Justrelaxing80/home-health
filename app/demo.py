@@ -15,7 +15,9 @@ ACTIVITIES = [("running", "Morning Run", 5200, 1900), ("cycling", "Evening Ride"
 def create_demo_profile(name: str = "Demo") -> int:
     rnd = random.Random(42)
     pid = db.execute("INSERT INTO profiles (name, color, units) VALUES (?, ?, 'imperial')", (name, "#1baf7a"))
-    today = date.today()
+    from . import peptides  # local import: avoids a cycle at module load
+
+    today = peptides.now_local().date()  # same clock as the rest of the app
     weight = 86.0
     fat = 24.5
     for i in range(119, -1, -1):
@@ -59,6 +61,7 @@ def create_demo_profile(name: str = "Demo") -> int:
                 "calories": rnd.randint(200, 750), "avg_hr": rnd.randint(105, 158),
             })
     _demo_peptides(pid, rnd)
+    _demo_supplements(pid, rnd)
     return pid
 
 
@@ -94,3 +97,29 @@ def _demo_peptides(pid: int, rnd: random.Random) -> None:
                  o["scheduled_for"], None if skipped else p["dose_mcg"],
                  None if skipped else peptides.units_for(p, p["dose_mcg"]),
                  None if skipped else peptides.SITES[rnd.randrange(len(peptides.SITES))]))
+
+
+def _demo_supplements(pid: int, rnd: random.Random) -> None:
+    """Four supplements with a month of check-offs; the last 9 days are complete."""
+    from . import peptides
+
+    today = peptides.now_local().date()
+    start = today - timedelta(days=30)
+    items = [("Protein powder", "#2a78d6", 25, "g", 1, "After workout"),
+             ("Vitamin D3", "#eda100", 2000, "IU", 1, "Morning"),
+             ("Fish oil (omega-3)", "#1baf7a", 1000, "mg", 2, "With meals"),
+             ("Creatine monohydrate", "#6250d6", 5, "g", 1, "Morning")]
+    ids = []
+    for name, color, amount, unit, servings, label in items:
+        ids.append((db.execute(
+            "INSERT INTO supplements (profile_id, name, color, amount, unit, servings, time_label, start_date) "
+            "VALUES (?,?,?,?,?,?,?,?)", (pid, name, color, amount, unit, servings, label, start.isoformat())),
+            servings))
+    for i in range(30, 0, -1):
+        d = today - timedelta(days=i)
+        for sid, servings in ids:
+            for n in range(1, servings + 1):
+                if i > 9 and rnd.random() < 0.07:
+                    continue
+                db.execute("INSERT INTO supplement_logs (supplement_id, profile_id, date, serving, taken_at) "
+                           "VALUES (?,?,?,?,?)", (sid, pid, d.isoformat(), n, f"{d.isoformat()}T08:00"))

@@ -159,6 +159,34 @@ CREATE TABLE IF NOT EXISTS peptide_reminders_sent (
     PRIMARY KEY (peptide_id, scheduled_for)
 );
 
+-- Supplements: a daily checklist (protein, B12, fish oil, ...). Dates are local 'YYYY-MM-DD'.
+CREATE TABLE IF NOT EXISTS supplements (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    color       TEXT NOT NULL DEFAULT '#1baf7a',
+    amount      REAL,
+    unit        TEXT NOT NULL DEFAULT '',
+    servings    INTEGER NOT NULL DEFAULT 1,          -- servings per scheduled day
+    freq        TEXT NOT NULL DEFAULT 'daily',       -- daily | weekdays
+    weekdays    TEXT NOT NULL DEFAULT '',            -- "0,2,4" (Mon=0)
+    time_label  TEXT NOT NULL DEFAULT '',            -- Morning | With meals | ...
+    start_date  TEXT NOT NULL,
+    active      INTEGER NOT NULL DEFAULT 1,
+    notes       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS supplement_logs (
+    supplement_id INTEGER NOT NULL REFERENCES supplements(id) ON DELETE CASCADE,
+    profile_id    INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    date          TEXT NOT NULL,
+    serving       INTEGER NOT NULL,                  -- 1..servings
+    taken_at      TEXT NOT NULL,
+    PRIMARY KEY (supplement_id, date, serving)
+);
+CREATE INDEX IF NOT EXISTS supplement_logs_by_day ON supplement_logs (profile_id, date);
+
 -- Push reminders via ntfy (https://ntfy.sh or self-hosted).
 CREATE TABLE IF NOT EXISTS notify (
     profile_id   INTEGER PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,

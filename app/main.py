@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import apple, db, demo, garmin, peptides, scale, sync
+from . import analysis, apple, db, demo, garmin, peptides, scale, supplements, sync
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 STATIC = Path(__file__).parent / "static"
@@ -147,6 +147,48 @@ class NotifyIn(BaseModel):
         return v.rstrip("/")
 
 
+class SupplementIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    color: str = "#1baf7a"
+    amount: float | None = Field(default=None, gt=0, le=1_000_000)
+    unit: str = Field(default="", max_length=20)
+    servings: int = Field(default=1, ge=1, le=6)
+    freq: Literal["daily", "weekdays"] = "daily"
+    weekdays: str = ""
+    time_label: str = Field(default="", max_length=30)
+    start_date: str | None = None
+    active: bool = True
+    notes: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if not HEX.match(self.color):
+            raise ValueError("color must be #rrggbb")
+        self.name = self.name.strip()
+        if self.start_date and not DAY.match(self.start_date):
+            raise ValueError("start date must be YYYY-MM-DD")
+        days = sorted({w.strip() for w in self.weekdays.split(",") if w.strip()})
+        if any(len(w) != 1 or w not in "0123456" for w in days):
+            raise ValueError("weekdays must be 0-6")
+        if self.freq == "weekdays" and not days:
+            raise ValueError("pick at least one weekday")
+        self.weekdays = ",".join(days)
+        return self
+
+
+class ServingIn(BaseModel):
+    date: str
+    serving: int = Field(ge=1, le=6)
+    taken: bool = True
+
+    @field_validator("date")
+    @classmethod
+    def _date(cls, v):
+        if not DAY.match(v):
+            raise ValueError("date must be YYYY-MM-DD")
+        return v
+
+
 def _profile(pid: int) -> dict:
     p = db.row("SELECT * FROM profiles WHERE id=?", (pid,))
     if not p:
@@ -220,9 +262,22 @@ def dashboard(pid: int, days: int = 90):
     latest_body = db.row("SELECT * FROM body WHERE profile_id=? ORDER BY measured_at DESC LIMIT 1", (pid,))
     activities = db.rows(
         "SELECT * FROM activities WHERE profile_id=? ORDER BY start_time DESC LIMIT 8", (pid,))
+    pep = peptides.summary(pid)
+    supp = supplements.summary(pid)
     return {"profile": p, "connections": _connections(pid), "days": days,
             "daily": daily, "body": body, "latest_body": latest_body, "activities": activities,
-            "peptides": peptides.summary(pid)}
+            "peptides": pep, "supplements": supp, "analysis": _analysis(p, pep, supp)}
+
+
+def _analysis(p: dict, pep, supp) -> dict | None:
+    today = peptides.now_local().date()
+    since = (today - timedelta(days=40)).isoformat()
+    since_ts = int(time.time()) - 31 * 86400
+    body = db.rows("SELECT * FROM body WHERE profile_id=? AND measured_at>=? ORDER BY measured_at",
+                   (p["id"], since_ts))
+    acts = db.rows("SELECT * FROM activities WHERE profile_id=? AND start_time>=? ORDER BY start_time",
+                   (p["id"], (today - timedelta(days=30)).isoformat()))
+    return analysis.build(p, _merged_daily(p["id"], since), body, acts, supp, pep)
 
 
 def _merged_daily(pid: int, since: str) -> list[dict]:
@@ -456,6 +511,74 @@ def dose_log_delete(pid: int, log_id: int):
     if not db.row("SELECT 1 FROM peptide_logs WHERE id=? AND profile_id=?", (log_id, pid)):
         raise HTTPException(404, "Log entry not found")
     db.execute("DELETE FROM peptide_logs WHERE id=?", (log_id,))
+
+
+# ---------------- supplements ----------------
+
+SUPP_COLS = ("name", "color", "amount", "unit", "servings", "freq", "weekdays", "time_label",
+             "start_date", "active", "notes")
+
+
+def _supplement(pid: int, sid: int) -> dict:
+    s = supplements.get(pid, sid)
+    if not s:
+        raise HTTPException(404, "Supplement not found")
+    return s
+
+
+@app.get("/api/profiles/{pid}/supplements")
+def supplement_page(pid: int, day: str | None = None):
+    _profile(pid)
+    if day and not DAY.match(day):
+        raise HTTPException(422, "day must be YYYY-MM-DD")
+    return supplements.page(pid, date.fromisoformat(day) if day else supplements.today())
+
+
+@app.post("/api/profiles/{pid}/supplements", status_code=201)
+def supplement_create(pid: int, body: SupplementIn):
+    _profile(pid)
+    vals = body.model_dump()
+    vals["start_date"] = vals["start_date"] or supplements.today().isoformat()
+    new_id = db.execute(
+        f"INSERT INTO supplements (profile_id, {', '.join(SUPP_COLS)}) VALUES (?, {', '.join('?' for _ in SUPP_COLS)})",
+        (pid, *(vals[c] for c in SUPP_COLS)))
+    return _supplement(pid, new_id)
+
+
+@app.put("/api/profiles/{pid}/supplements/{sid}")
+def supplement_update(pid: int, sid: int, body: SupplementIn):
+    cur = _supplement(pid, sid)
+    vals = body.model_dump()
+    vals["start_date"] = vals["start_date"] or cur["start_date"]
+    db.execute(f"UPDATE supplements SET {', '.join(c + '=?' for c in SUPP_COLS)} WHERE id=?",
+               (*(vals[c] for c in SUPP_COLS), sid))
+    # Servings above a lowered daily count no longer apply.
+    db.execute("DELETE FROM supplement_logs WHERE supplement_id=? AND serving>?", (sid, vals["servings"]))
+    return _supplement(pid, sid)
+
+
+@app.delete("/api/profiles/{pid}/supplements/{sid}", status_code=204)
+def supplement_delete(pid: int, sid: int):
+    _supplement(pid, sid)
+    db.execute("DELETE FROM supplements WHERE id=?", (sid,))
+
+
+@app.put("/api/profiles/{pid}/supplements/{sid}/serving")
+def supplement_serving(pid: int, sid: int, body: ServingIn):
+    s = _supplement(pid, sid)
+    if body.serving > s["servings"]:
+        raise HTTPException(422, f"{s['name']} has {s['servings']} serving(s) a day")
+    if body.date > supplements.today().isoformat():
+        raise HTTPException(422, "Can't log a future day")
+    if body.taken:
+        db.execute("INSERT OR IGNORE INTO supplement_logs (supplement_id, profile_id, date, serving, taken_at) "
+                   "VALUES (?,?,?,?,?)", (sid, pid, body.date, body.serving,
+                                          peptides.now_local().strftime("%Y-%m-%dT%H:%M")))
+    else:
+        db.execute("DELETE FROM supplement_logs WHERE supplement_id=? AND date=? AND serving=?",
+                   (sid, body.date, body.serving))
+    return {"taken": db.row("SELECT COUNT(*) AS n FROM supplement_logs WHERE supplement_id=? AND date=?",
+                            (sid, body.date))["n"]}
 
 
 @app.get("/api/profiles/{pid}/notify")
