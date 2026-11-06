@@ -3,7 +3,8 @@
 Linking: email/password login; if Garmin asks for an MFA code the half-finished
 login is parked in memory until the user submits the code from the web UI.
 Sync: restore the saved session tokens (refreshing them as needed), pull daily
-stats, sleep, HRV and activities, then persist the possibly-refreshed tokens.
+stats, sleep, HRV, activities and scale weigh-ins (e.g. a Renpho scale linked
+to Garmin Connect), then persist the possibly-refreshed tokens.
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ log = logging.getLogger("home-health.garmin")
 
 BACKFILL_DAYS = int(os.environ.get("GARMIN_BACKFILL_DAYS", "30"))
 REFRESH_DAYS = 3          # recent days are re-pulled because Garmin revises them
+WEIGHT_BACKFILL_DAYS = 365
+WEIGHT_REFRESH_DAYS = 14
 MFA_TIMEOUT_S = 600
 
 # profile_id -> (Garmin instance, client_state, email, password, created)
@@ -164,10 +167,63 @@ def sync(profile_id: int) -> dict:
     except Exception as e:  # noqa: BLE001
         log.warning("activities failed: %s", e)
 
+    weighins = 0
+    try:
+        weighins = _weigh_ins(g, profile_id, today)
+    except Exception as e:  # noqa: BLE001
+        log.warning("weigh-ins failed: %s", e)
+
     # Persist refreshed tokens so the next run doesn't need the password/MFA.
     with db.connect() as c:
         c.execute(
             "UPDATE connections SET tokens_enc=?, last_sync=? WHERE profile_id=? AND provider='garmin'",
             (vault.encrypt(g.client.dumps()), datetime.now(timezone.utc).isoformat(timespec="seconds"), profile_id),
         )
-    return {"days": days, "activities": acts}
+    return {"days": days, "activities": acts, "weigh_ins": weighins}
+
+
+def parse_weigh_in(w: dict) -> tuple[int, dict] | None:
+    """One Garmin `dateWeightList` entry -> (unix seconds, body values). Weights come in grams.
+
+    Only fields with the same meaning as the Renpho ones are kept (muscle and bone
+    arrive as masses, while the app stores Renpho's percentages, so they're skipped).
+    """
+    grams = _num(w.get("weight"))
+    ms = _num(w.get("timestampGMT")) or _num(w.get("date"))
+    if not grams or not ms:
+        return None
+    vals = {
+        "weight_kg": round(grams / 1000, 2),
+        "bmi": _num(w.get("bmi")),
+        "body_fat": _num(w.get("bodyFat")),
+        "water": _num(w.get("bodyWater")),
+        "visceral_fat": _num(w.get("visceralFat")),
+        "metabolic_age": _num(w.get("metabolicAge")),
+    }
+    return int(ms // 1000), {k: v for k, v in vals.items() if v is not None}
+
+
+def _weigh_ins(g: Garmin, profile_id: int, today: date) -> int:
+    have = db.row("SELECT 1 FROM body WHERE profile_id=? AND source='garmin' LIMIT 1", (profile_id,))
+    start = today - timedelta(days=(WEIGHT_REFRESH_DAYS if have else WEIGHT_BACKFILL_DAYS) - 1)
+    n = 0
+    while start <= today:
+        end = min(today, start + timedelta(days=89))
+        data = g.get_body_composition(start.isoformat(), end.isoformat()) or {}
+        for w in data.get("dateWeightList") or []:
+            parsed = parse_weigh_in(w)
+            if not parsed:
+                continue
+            ts, vals = parsed
+            # The same weigh-in may already be here from the Renpho link or a CSV import.
+            if db.row("SELECT 1 FROM body WHERE profile_id=? AND source<>'garmin' AND ABS(measured_at-?)<600",
+                      (profile_id, ts)):
+                continue
+            if db.upsert_body(profile_id, ts, "garmin", vals):
+                n += 1
+        start = end + timedelta(days=1)
+    # And if Renpho/CSV delivered a reading after Garmin did, keep theirs (more fields).
+    db.execute("DELETE FROM body WHERE profile_id=? AND source='garmin' AND EXISTS (SELECT 1 FROM body b2 "
+               "WHERE b2.profile_id=body.profile_id AND b2.source<>'garmin' "
+               "AND ABS(b2.measured_at-body.measured_at)<600)", (profile_id,))
+    return n

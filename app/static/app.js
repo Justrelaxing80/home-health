@@ -567,8 +567,8 @@ async function renderSettings(pid) {
           <p class="err" hidden></p>
         </form>
       </section>
-      ${providerCard("garmin", "Garmin", "Steps, sleep, resting heart rate, HRV, Body Battery, stress and activities. Uses Garmin Connect's unofficial login, as most self-hosted tools do. Your password and session are stored encrypted on this server.")}
-      ${providerCard("renpho", "Renpho", "Weight and body composition from your Renpho scale via Renpho's cloud (unofficial API). If cloud sync stops working, use CSV import below.", `
+      ${providerCard("garmin", "Garmin", "Steps, sleep, resting heart rate, HRV, Body Battery, stress, activities, and scale weigh-ins (including a Renpho scale linked to Garmin Connect in the Renpho app). Uses Garmin Connect's unofficial login, as most self-hosted tools do. Your password and session are stored encrypted on this server.")}
+      ${providerCard("renpho", "Renpho", "Weight and body composition from your Renpho scale via Renpho's cloud (unofficial API). Not needed if your Renpho app already sends weigh-ins to Garmin Connect, because the Garmin link picks them up. If cloud sync stops working, use CSV import below.", `
         <hr style="border:0;border-top:1px solid var(--border);margin:16px 0">
         <h2 style="font-size:15px;margin-bottom:4px">Import Renpho CSV</h2>
         <p class="note">In the Renpho app: <i>Me → Data export</i> (or <i>Settings → Export data</i>), then upload the file here. Re-importing the same file is safe.</p>

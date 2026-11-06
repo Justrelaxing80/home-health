@@ -19,7 +19,8 @@ number names the day it came from, and metrics with no recent data are left out.
 **Supplements tab:** a daily check-off list (several servings a day, specific
 weekdays), a 14-day consistency grid, per-supplement and overall streaks, and a
 one-tap list of the 25 most common supplements (protein, creatine, D3, B12,
-fish oil, magnesium, ...) plus your own. Streaks count days where every scheduled
+fish oil, magnesium, ...) plus your own, and optional ntfy reminders at set
+times (grouped into one notification, skipped if already checked off). Streaks count days where every scheduled
 serving was checked off; today never breaks a streak until it's over. The
 dashboard shows the supplement and peptide streaks.
 
@@ -60,6 +61,10 @@ of `9085:8080`.
 2. **Add profile** for each person, then in their **Settings**:
    - **Garmin**: enter their Garmin Connect email/password. If the account has
      two-step verification, Garmin sends a code and the page asks for it.
+   - **Scale via Garmin**: if the Renpho app is connected to Garmin Connect
+     (Renpho app → Me → Third-party apps → Garmin), the Garmin link also imports
+     weigh-ins (weight, BMI, body fat, water, visceral fat, metabolic age; one
+     year on the first sync). Duplicates with the Renpho link/CSV are dropped.
    - **Renpho**: enter their Renpho app email/password. Or skip the cloud link and
      use **Import Renpho CSV** with a file exported from the Renpho app.
    - **Apple Health**: Apple has no web login; data has to come from the iPhone.
@@ -86,7 +91,13 @@ of `9085:8080`.
 - **Renpho family members:** a profile reads the measurements of the Renpho
   account it's linked to. Give each person their own Renpho login, or use CSV import.
 - **No login screen.** Anyone who can reach the page can see every profile. Keep
-  it on your home network and don't port-forward it to the internet. Passwords
+  it on your home network and don't port-forward it to the internet.
+- **Access from outside the home:** use [Tailscale](https://tailscale.com) (free
+  for personal use). Install the Tailscale app from the ZimaOS App Store and sign
+  in, then install Tailscale on your phone/laptop with the same account and open
+  `http://<zima's tailscale IP or name>:9085`. Only your own signed-in devices can
+  reach it, and the Apple Health sync URL keeps working away from home if you use
+  that address in Health Auto Export. Passwords
   and tokens are encrypted at rest with a key stored in the data folder.
 
 ## Development

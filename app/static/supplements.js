@@ -18,8 +18,13 @@ async function renderSupplements(pid) {
   setTopbar(p, { section: "supplements" });
   if (!state.supDay || state.supPid !== pid) { state.supDay = null; state.supPid = pid; }
 
-  let data;
-  try { data = await api(`/api/profiles/${pid}/supplements${state.supDay ? `?day=${state.supDay}` : ""}`); }
+  let data, notify;
+  try {
+    [data, notify] = await Promise.all([
+      api(`/api/profiles/${pid}/supplements${state.supDay ? `?day=${state.supDay}` : ""}`),
+      api(`/api/profiles/${pid}/notify`),
+    ]);
+  }
   catch (e) { $("#view").innerHTML = `${navTabs(pid, "supplements")}<p class="err">${esc(e.message)}</p>`; return; }
   const today = data.today, day = data.day;
   const sups = data.supplements, byId = Object.fromEntries(sups.map((s) => [s.id, s]));
@@ -71,6 +76,7 @@ async function renderSupplements(pid) {
               <button class="btn small" data-sedit="${s.id}">Edit</button></span>
           </div>
           <div class="note">${fmtAmount(s)} · ${suppSchedule(s)}${s.active && s.streak.best > s.streak.current ? ` · best ${days(s.streak.best)}` : ""}</div>
+          ${s.remind_times ? `<div class="note">Reminders: ${s.remind_times.split(",").map(hhmmLabel).join(", ")}${notify ? "" : ` <span class="err-inline">(turn on reminders below)</span>`}</div>` : ""}
           ${s.notes ? `<div class="note">${esc(s.notes)}</div>` : ""}
         </div>`).join("")}
       </section>` : ""}
@@ -82,6 +88,8 @@ async function renderSupplements(pid) {
           return `<button class="cat-item" data-cat="${i}" ${has ? "disabled" : ""}><b>${has ? "✓ " : "＋ "}${esc(c.name)}</b><span>${nf2.format(c.amount)} ${esc(c.unit)}</span></button>`;
         }).join("")}<button class="cat-item custom" id="sup-custom"><b>＋ Something else</b><span>Add your own</span></button></div>
       </section>
+      <section class="card" id="sup-notify">${notifyHtml(notify)}
+        <p class="note">Set a reminder time on each supplement with <b>Edit</b>. Supplements due at the same time come as one notification, and none is sent if it's already checked off.</p></section>
     </div>
     <p class="note disclaimer">For personal tracking only. Amounts shown are common label servings, not recommendations.</p>`;
 
@@ -106,6 +114,7 @@ async function renderSupplements(pid) {
       toast(`${c.name} added`); route();
     } catch (e) { b.disabled = false; toast(e.message); }
   });
+  wireNotify(pid, notify);
   document.querySelectorAll("[data-serv]").forEach((b) => b.onclick = async () => {
     const [sid, n] = b.dataset.serv.split("|");
     const s = byId[sid], taken = b.getAttribute("aria-pressed") !== "true";
@@ -151,7 +160,7 @@ function gridHtml(data, active) {
 function openSupplementDialog(pid, x, data) {
   const editing = !!x;
   const v = x || { name: "", color: PROFILE_COLORS[data.supplements.length % PROFILE_COLORS.length], amount: null, unit: "mg",
-    servings: 1, freq: "daily", weekdays: "", time_label: "Morning", notes: "", active: 1 };
+    servings: 1, freq: "daily", weekdays: "", time_label: "Morning", remind_times: "", notes: "", active: 1 };
   const wd = (v.weekdays || "").split(",");
   const units = data.units.includes(v.unit) || !v.unit ? data.units : [v.unit, ...data.units];
   const d = modal(`<form method="dialog" id="sup-form">
@@ -169,6 +178,9 @@ function openSupplementDialog(pid, x, data) {
       <option value="daily" ${v.freq === "daily" ? "selected" : ""}>Every day</option>
       <option value="weekdays" ${v.freq === "weekdays" ? "selected" : ""}>Specific days of the week</option></select></div>
     <div class="field" id="sp-wd-box"><label>Days</label><div class="daypicks">${WEEKDAYS.map((n, i) => `<label><input type="checkbox" value="${i}" ${wd.includes(String(i)) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div></div>
+    <div class="field"><label>Reminder times (optional)</label><div id="sp-times"></div>
+      <button type="button" class="linkbtn" id="sp-addtime">＋ Add a reminder</button>
+      <p class="note" style="margin:4px 0 0">Sent through the Reminders settings on this tab, only if the supplement isn't checked off yet.</p></div>
     <div class="field"><label for="sp-notes">Notes</label><textarea id="sp-notes" rows="2" maxlength="500" placeholder="Brand, with food, etc.">${esc(v.notes || "")}</textarea></div>
     ${editing ? `<label class="check"><input type="checkbox" id="sp-active" ${v.active ? "checked" : ""}> Active (uncheck to pause; paused supplements don't affect streaks)</label>` : ""}
     <p class="err" hidden></p>
@@ -180,6 +192,20 @@ function openSupplementDialog(pid, x, data) {
     </div></form>`, "wide");
 
   renderSwatches($("#sp-colors", d), v.color);
+  const timesEl = $("#sp-times", d);
+  const addTime = (t) => {
+    const row = document.createElement("div");
+    row.className = "row time-row";
+    row.innerHTML = `<input type="time" value="${esc(t)}" required><button type="button" class="linkbtn" aria-label="Remove reminder">Remove</button>`;
+    $("button", row).onclick = () => row.remove();
+    timesEl.appendChild(row);
+  };
+  (v.remind_times || "").split(",").filter(Boolean).forEach(addTime);
+  const defaultTime = { Morning: "08:00", "With meals": "12:00", Afternoon: "14:00", Evening: "18:00", Bedtime: "21:30", "Before workout": "17:00", "After workout": "18:30" };
+  $("#sp-addtime", d).onclick = () => {
+    if (timesEl.children.length >= 6) return;
+    addTime(timesEl.children.length ? "20:00" : defaultTime[$("#sp-time", d).value] || "08:00");
+  };
   const freq = $("#sp-freq", d);
   const showFreq = () => { $("#sp-wd-box", d).hidden = freq.value !== "weekdays"; };
   freq.onchange = showFreq; showFreq();
@@ -205,6 +231,7 @@ function openSupplementDialog(pid, x, data) {
       amount: amt === "" ? null : +amt, unit: $("#sp-unit", d).value, servings: +$("#sp-serv", d).value,
       freq: freq.value, weekdays: [...d.querySelectorAll(".daypicks input:checked")].map((i) => i.value).join(","),
       time_label: $("#sp-time", d).value, notes: $("#sp-notes", d).value,
+      remind_times: [...timesEl.querySelectorAll("input")].map((i) => i.value).filter(Boolean).join(","),
       active: editing ? $("#sp-active", d).checked : true,
     };
     if (editing && body.servings < v.servings && !confirm(`Lower to ${body.servings} serving(s) a day? Check-offs above that are removed.`)) return;

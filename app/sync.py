@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from . import db, garmin, peptides, scale
+from . import db, garmin, peptides, scale, supplements
 
 log = logging.getLogger("home-health.sync")
 
@@ -81,6 +81,8 @@ def start_scheduler() -> None:
         _scheduler.add_job(sync_all, "interval", minutes=SYNC_INTERVAL_MIN, id="sync_all",
                            max_instances=1, coalesce=True)
     _scheduler.add_job(peptides.check_reminders, "cron", second=5, id="reminders",
+                       max_instances=1, coalesce=True)
+    _scheduler.add_job(supplements.check_reminders, "cron", second=20, id="supplement_reminders",
                        max_instances=1, coalesce=True)
     _scheduler.start()
     # Recover rows left as "syncing" by a crash/restart.

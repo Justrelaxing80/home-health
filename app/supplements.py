@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import math
 from datetime import date, timedelta
 
 from . import db, streak
-from .peptides import now_local
+from .peptides import REMIND_WINDOW_MIN, now_local, send_ntfy
+
+log = logging.getLogger("home-health.supplements")
 
 # The 25 most common supplements, with a typical label serving as the starting
 # amount. These are defaults to edit to match your product, not recommendations.
@@ -117,3 +121,64 @@ def summary(profile_id: int) -> dict | None:
     p = page(profile_id, today())
     return {"due": p["servings_due"], "taken": p["servings_taken"], "streak": p["streak"],
             "count": sum(1 for s in p["supplements"] if s["scheduled"])}
+
+
+# ---------------- reminders (ntfy) ----------------
+
+def _fmt(s: dict) -> str:
+    if s.get("amount") is None:
+        return s["name"]
+    return f"{s['name']} ({s['amount']:,g}{' ' + s['unit'] if s['unit'] else ''})"
+
+
+def due_reminders(sups: list[dict], counts: dict, d: date, earliest: str, stamp: str) -> list[tuple[str, dict]]:
+    """(slot, supplement) pairs whose reminder time falls in [earliest, stamp] and that still
+    need a serving. With n reminder times and k servings, the i-th reminder expects
+    ceil(k*i/n) servings checked off by then (one time = remind until all are taken)."""
+    out = []
+    for s in sups:
+        if not scheduled_on(s, d):
+            continue
+        times = sorted({t for t in (s.get("remind_times") or "").split(",") if t})
+        for i, t in enumerate(times, 1):
+            slot = f"{d.isoformat()}T{t}"
+            if not (earliest <= slot <= stamp):
+                continue
+            expected = math.ceil(s["servings"] * i / len(times))
+            if counts.get(s["id"], 0) < expected:
+                out.append((slot, s))
+    return out
+
+
+def check_reminders() -> None:
+    """Run every minute: one notification per profile and time listing the supplements still due."""
+    now = now_local()
+    stamp = now.strftime("%Y-%m-%dT%H:%M")
+    earliest = (now - timedelta(minutes=REMIND_WINDOW_MIN)).strftime("%Y-%m-%dT%H:%M")
+    d = now.date()
+    for cfg in db.rows("SELECT * FROM notify"):
+        pid = cfg["profile_id"]
+        sups = db.rows("SELECT * FROM supplements WHERE profile_id=? AND active=1 AND remind_times<>''", (pid,))
+        if not sups:
+            continue
+        counts = {r["supplement_id"]: r["n"] for r in db.rows(
+            "SELECT supplement_id, COUNT(*) AS n FROM supplement_logs WHERE profile_id=? AND date=? "
+            "GROUP BY supplement_id", (pid, d.isoformat()))}
+        groups: dict[str, list[dict]] = {}
+        for slot, s in due_reminders(sups, counts, d, earliest, stamp):
+            with db.connect() as c:
+                cur = c.execute("INSERT OR IGNORE INTO supplement_reminders_sent VALUES (?, ?)", (s["id"], slot))
+                if cur.rowcount == 0:
+                    continue  # already sent
+            groups.setdefault(slot, []).append(s)
+        prof = db.row("SELECT name FROM profiles WHERE id=?", (pid,))
+        for slot, items in sorted(groups.items()):
+            title = f"Supplements · {prof['name']}" if prof else "Supplements"
+            msg = ("Time to take your supplements." if cfg["generic_text"]
+                   else "Time for: " + ", ".join(_fmt(s) for s in items))
+            try:
+                send_ntfy(cfg["ntfy_server"], cfg["ntfy_topic"], title, msg, tags="pill")
+            except Exception as e:  # noqa: BLE001
+                log.warning("ntfy supplement reminder failed profile=%s: %s", pid, e)
+    db.execute("DELETE FROM supplement_reminders_sent WHERE slot < ?",
+               ((now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M"),))

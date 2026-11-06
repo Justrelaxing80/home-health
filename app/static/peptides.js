@@ -272,18 +272,18 @@ function notifyHtml(n) {
   if (!n) {
     const topic = `home-health-${Math.random().toString(36).slice(2, 10)}`;
     return `<h2 style="margin-bottom:4px">Reminders</h2>
-      <p class="note" style="margin-top:0">Get a phone notification when a dose is due. Uses <b>ntfy</b>, a free push service: install the ntfy app (iPhone/Android), subscribe to the topic below, then save.</p>
+      <p class="note" style="margin-top:0">Get a phone notification when a peptide dose or supplement is due. Uses <b>ntfy</b>, a free push service: install the ntfy app (iPhone/Android), subscribe to the topic below, then save.</p>
       <form id="notify-form">
         <div class="field"><label for="n-topic">Topic (works like a password; keep it hard to guess)</label><input id="n-topic" value="${topic}" required pattern="[A-Za-z0-9_-]{6,64}"></div>
         <div class="field"><label for="n-server">Server</label><input id="n-server" value="https://ntfy.sh" required></div>
-        <label class="check"><input type="checkbox" id="n-generic"> Hide peptide names in notifications</label>
+        <label class="check"><input type="checkbox" id="n-generic"> Hide names in notifications</label>
         <div class="row" style="margin-top:10px"><button class="btn primary">Turn on reminders</button></div>
         <p class="err" hidden></p>
       </form>`;
   }
   return `<div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Reminders</h2><span class="status linked">On</span></div>
-    <p class="note" style="margin-top:0">Notifications go to topic <b>${esc(n.ntfy_topic)}</b> on ${esc(n.ntfy_server)}. In the ntfy app, subscribe to that topic to receive them. A reminder is sent when each scheduled dose comes due, for peptides with reminders turned on.</p>
-    <label class="check"><input type="checkbox" id="n-generic" ${n.generic_text ? "checked" : ""}> Hide peptide names in notifications</label>
+    <p class="note" style="margin-top:0">Notifications go to topic <b>${esc(n.ntfy_topic)}</b> on ${esc(n.ntfy_server)}. In the ntfy app, subscribe to that topic to receive them. A reminder is sent when a scheduled peptide dose comes due, and at each supplement's reminder time if it isn't checked off yet. These settings are shared by the Peptides and Supplements tabs.</p>
+    <label class="check"><input type="checkbox" id="n-generic" ${n.generic_text ? "checked" : ""}> Hide names in notifications</label>
     <div class="row" style="margin-top:10px">
       <button class="btn small" id="n-test">Send test</button>
       <button class="btn small danger" id="n-off">Turn off</button>
@@ -308,7 +308,7 @@ function wireNotify(pid, n) {
     catch (x) { toast(x.message); }
   };
   $("#n-off").onclick = async () => {
-    if (!confirm("Turn off dose reminders for this profile?")) return;
+    if (!confirm("Turn off all reminders (peptides and supplements) for this profile?")) return;
     await api(`/api/profiles/${pid}/notify`, { method: "DELETE" }); route();
   };
   $("#n-generic").onchange = async (e) => {

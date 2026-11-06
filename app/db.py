@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS supplements (
     freq        TEXT NOT NULL DEFAULT 'daily',       -- daily | weekdays
     weekdays    TEXT NOT NULL DEFAULT '',            -- "0,2,4" (Mon=0)
     time_label  TEXT NOT NULL DEFAULT '',            -- Morning | With meals | ...
+    remind_times TEXT NOT NULL DEFAULT '',           -- "08:00,20:00"; empty = no reminders
     start_date  TEXT NOT NULL,
     active      INTEGER NOT NULL DEFAULT 1,
     notes       TEXT NOT NULL DEFAULT '',
@@ -186,6 +187,12 @@ CREATE TABLE IF NOT EXISTS supplement_logs (
     PRIMARY KEY (supplement_id, date, serving)
 );
 CREATE INDEX IF NOT EXISTS supplement_logs_by_day ON supplement_logs (profile_id, date);
+
+CREATE TABLE IF NOT EXISTS supplement_reminders_sent (
+    supplement_id INTEGER NOT NULL REFERENCES supplements(id) ON DELETE CASCADE,
+    slot          TEXT NOT NULL,                     -- 'YYYY-MM-DDTHH:MM'
+    PRIMARY KEY (supplement_id, slot)
+);
 
 -- Push reminders via ntfy (https://ntfy.sh or self-hosted).
 CREATE TABLE IF NOT EXISTS notify (
@@ -212,6 +219,16 @@ def init() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as c:
         c.executescript(SCHEMA)
+        # Columns added after the first release (CREATE TABLE IF NOT EXISTS won't add them).
+        for table, col, ddl in MIGRATIONS:
+            have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+            if col not in have:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+
+
+MIGRATIONS = [
+    ("supplements", "remind_times", "TEXT NOT NULL DEFAULT ''"),
+]
 
 
 @contextmanager

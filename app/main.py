@@ -156,6 +156,7 @@ class SupplementIn(BaseModel):
     freq: Literal["daily", "weekdays"] = "daily"
     weekdays: str = ""
     time_label: str = Field(default="", max_length=30)
+    remind_times: str = ""
     start_date: str | None = None
     active: bool = True
     notes: str = Field(default="", max_length=500)
@@ -173,6 +174,10 @@ class SupplementIn(BaseModel):
         if self.freq == "weekdays" and not days:
             raise ValueError("pick at least one weekday")
         self.weekdays = ",".join(days)
+        times = sorted({t.strip() for t in self.remind_times.split(",") if t.strip()})
+        if any(not HHMM.match(t) for t in times) or len(times) > 6:
+            raise ValueError("reminder times must be HH:MM (up to 6)")
+        self.remind_times = ",".join(times)
         return self
 
 
@@ -516,7 +521,7 @@ def dose_log_delete(pid: int, log_id: int):
 # ---------------- supplements ----------------
 
 SUPP_COLS = ("name", "color", "amount", "unit", "servings", "freq", "weekdays", "time_label",
-             "start_date", "active", "notes")
+             "remind_times", "start_date", "active", "notes")
 
 
 def _supplement(pid: int, sid: int) -> dict:
